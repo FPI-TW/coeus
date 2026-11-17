@@ -1,8 +1,8 @@
 # 容器部署（映像＋docker compose）
 
-給其他券商在自己環境自架的官方部署形態，也是廷豐測試環境之後的遷移目標（遷移本身另案進行）。單機或少數幾台 VM，一份應用映像跑四個角色，除了設定的 LLM 端點以外不需要任何外連。
+給其他券商在自己環境自架的官方部署形態<!-- export-omit:begin -->，也是廷豐測試環境之後的遷移目標（遷移本身另案進行）<!-- export-omit:end -->。單機或少數幾台 VM，一份應用映像跑四個角色，除了設定的 LLM 端點以外不需要任何外連。
 
-現有的 systemd 主機部署（`make serve`、`deploy/systemd/`，程序見 `docs/production_resilience.md`）不受影響：容器的 schema 閘門、排程與設定都只在容器 entrypoint 裡。
+現有的 systemd 主機部署（`make serve`、`deploy/systemd/`，程序見 `docs/production_resilience.md`）不受影響：容器的 schema 閘門、排程與設定都只在容器 entrypoint 裡。 <!-- export-omit -->
 
 ## 檔案
 
@@ -19,7 +19,7 @@
 | `deploy/demo/docker-compose.real-llm.yml` | 疊在示範 override 之後，把 LLM 改回 `.env` 裡的真實設定 |
 | `deploy/demo/fake_llm.py` | 示範與端到端測試用的假 LLM（OpenAI 相容、只用標準函式庫、回應決定性） |
 
-Dockerfile 放在 `deploy/container/` 而不是 repo 根：repo 根的 `deploy/docker-compose.yml` 是廷豐測試環境的對外邊緣（nginx＋cloudflared），兩者無關；部署相關的真相來源都在 `deploy/` 底下。`.dockerignore` 必須在 build context 的根，所以在 repo 根。
+Dockerfile 放在 `deploy/container/` 而不是 repo 根<!-- export-omit:begin -->：repo 根的 `deploy/docker-compose.yml` 是廷豐測試環境的對外邊緣（nginx＋cloudflared），兩者無關；部署相關的真相來源都在 `deploy/` 底下<!-- export-omit:end -->。`.dockerignore` 必須在 build context 的根，所以在 repo 根。
 
 ## 系統需求
 
@@ -114,7 +114,7 @@ compose 只把 `.env` 與 shell 裡明確傳入的變數交給容器：確認值
 
 容器裡的每日備份直接連 DB（`DB_BACKUP_VIA=direct`，連線由 entrypoint 從 `REPORT_MARK_DB_URL` 換算成 libpq 環境變數，密碼不進 argv），其餘行為與主機版相同：落點必須是掛載點而且可寫，否則失敗、不退回本地路徑。語料層（`research_report`、`report_chunk`）不在每日備份裡，重建靠原檔重新入庫；要整庫保護就另外對 `pgdata` 做 volume 快照，或定期留一份 migrate 那種全庫備份。
 
-還原（以全庫備份為例；不可重建表的單表還原與演練步驟見 `docs/production_resilience.md`「備份與還原」）：
+還原（以全庫備份為例<!-- export-omit:begin -->；不可重建表的單表還原與演練步驟見 `docs/production_resilience.md`「備份與還原」<!-- export-omit:end -->）：
 
 ```bash
 docker compose stop web worker scheduler
@@ -127,7 +127,7 @@ docker compose up -d
 
 ## systemd timer 對照表
 
-`deploy/systemd/` 的每一支 timer 都有歸屬（`deploy/container/scheduler.py`，`tests/test_container_deploy.py` 對帳這張表、也逐支比對排程時間與 timer 的 OnCalendar）。框架排程在容器的 `TZ`（預設 Asia/Taipei）下解讀；預設關的工作以 `SCHEDULER_ENABLE` 開啟，預設開的以 `SCHEDULER_DISABLE` 關掉（逗號分隔的工作名，打錯名字 scheduler 拒絕啟動）。
+<!-- export-omit:begin -->`deploy/systemd/` 的每一支 timer 都有歸屬（`deploy/container/scheduler.py`，`tests/test_container_deploy.py` 對帳這張表、也逐支比對排程時間與 timer 的 OnCalendar）。<!-- export-omit:end -->框架排程在容器的 `TZ`（預設 Asia/Taipei）下解讀；預設關的工作以 `SCHEDULER_ENABLE` 開啟，預設開的以 `SCHEDULER_DISABLE` 關掉（逗號分隔的工作名，打錯名字 scheduler 拒絕啟動）。
 
 | Timer | 歸屬 | 容器裡 |
 |---|---|---|
@@ -144,29 +144,29 @@ docker compose up -d
 | `report-mark-retrieval-regression.timer` | scheduler | `retrieval-regression`（預設關）：07:40；profile 自帶凍結題集（`profiles/<名稱>/eval/questions.json`，見 `docs/WORKFLOW.md`「導入驗收」）時自動開、比的是那一份，`SCHEDULER_DISABLE` 照樣關得掉；要先對這個部署擷取一次基準（`python scripts/retrieval_regression.py capture`），會載入嵌入模型 |
 | `report-mark-r2-reconcile.timer` | scheduler | `r2-reconcile`（預設關）：週一 07:00；只在物件儲存開著時有意義 |
 | `report-mark-upload.timer` | worker | 常駐的 `worker` 服務，每 `UPLOAD_WORKER_INTERVAL_SECONDS` 秒一輪 |
-| `report-mark-sync.timer` | 廷豐主機層 | 來源同步（NAS 掛載／R2 inbox）；框架的對應是下方框架專屬排程的 `connectors` |
-| `report-mark-freshness.timer` | 廷豐主機層 | 判讀 sync 殼的心跳，隨 sync 一起 |
-| `report-mark-beacon.timer` | 廷豐主機層 | 主機信標 |
-| `report-mark-load-observations.timer` | 廷豐主機層 | 主機監控 spool 匯入 |
-| `report-mark-rollup-observations.timer` | 廷豐主機層 | 主機監控觀測的保留與聚合 |
-| `report-mark-health.timer` | 廷豐主機層 | web 探針（P5） |
-| `report-mark-incident.timer` | 廷豐主機層 | 事件處理（P5／Slack） |
-| `report-mark-container-health.timer` | 廷豐主機層 | 容器探針 |
-| `report-mark-container-incident.timer` | 廷豐主機層 | 事件處理 |
-| `report-mark-edge-health.timer` | 廷豐主機層 | 邊緣探針 |
-| `report-mark-edge-incident.timer` | 廷豐主機層 | 事件處理 |
-| `report-mark-feed-health.timer` | 廷豐主機層 | 來源主機信標探針 |
-| `report-mark-feed-incident.timer` | 廷豐主機層 | 事件處理 |
-| `report-mark-host-health.timer` | 廷豐主機層 | 主機資源探針 |
-| `report-mark-host-incident.timer` | 廷豐主機層 | 事件處理 |
-| `report-mark-linebot-health.timer` | 廷豐主機層 | LINE bot 探針 |
-| `report-mark-linebot-incident.timer` | 廷豐主機層 | 事件處理 |
-| `report-mark-security-health.timer` | 廷豐主機層 | 安全事件探針 |
-| `report-mark-security-incident.timer` | 廷豐主機層 | 事件處理 |
+| `report-mark-sync.timer` | 廷豐主機層 | 來源同步（NAS 掛載／R2 inbox）；框架的對應是下方框架專屬排程的 `connectors` <!-- export-omit --> |
+| `report-mark-freshness.timer` | 廷豐主機層 | 判讀 sync 殼的心跳，隨 sync 一起 <!-- export-omit --> |
+| `report-mark-beacon.timer` | 廷豐主機層 | 主機信標 <!-- export-omit --> |
+| `report-mark-load-observations.timer` | 廷豐主機層 | 主機監控 spool 匯入 <!-- export-omit --> |
+| `report-mark-rollup-observations.timer` | 廷豐主機層 | 主機監控觀測的保留與聚合 <!-- export-omit --> |
+| `report-mark-health.timer` | 廷豐主機層 | web 探針（P5） <!-- export-omit --> |
+| `report-mark-incident.timer` | 廷豐主機層 | 事件處理（P5／Slack） <!-- export-omit --> |
+| `report-mark-container-health.timer` | 廷豐主機層 | 容器探針 <!-- export-omit --> |
+| `report-mark-container-incident.timer` | 廷豐主機層 | 事件處理 <!-- export-omit --> |
+| `report-mark-edge-health.timer` | 廷豐主機層 | 邊緣探針 <!-- export-omit --> |
+| `report-mark-edge-incident.timer` | 廷豐主機層 | 事件處理 <!-- export-omit --> |
+| `report-mark-feed-health.timer` | 廷豐主機層 | 來源主機信標探針 <!-- export-omit --> |
+| `report-mark-feed-incident.timer` | 廷豐主機層 | 事件處理 <!-- export-omit --> |
+| `report-mark-host-health.timer` | 廷豐主機層 | 主機資源探針 <!-- export-omit --> |
+| `report-mark-host-incident.timer` | 廷豐主機層 | 事件處理 <!-- export-omit --> |
+| `report-mark-linebot-health.timer` | 廷豐主機層 | LINE bot 探針 <!-- export-omit --> |
+| `report-mark-linebot-incident.timer` | 廷豐主機層 | 事件處理 <!-- export-omit --> |
+| `report-mark-security-health.timer` | 廷豐主機層 | 安全事件探針 <!-- export-omit --> |
+| `report-mark-security-incident.timer` | 廷豐主機層 | 事件處理 <!-- export-omit --> |
 
 ### 框架專屬排程
 
-沒有對應 systemd timer 的工作（廷豐主機上同樣的事由主機層的 sync 殼做）。開關與上表相同（`SCHEDULER_DISABLE`／`SCHEDULER_ENABLE`）。
+沒有對應 systemd timer 的工作<!-- export-omit:begin -->（廷豐主機上同樣的事由主機層的 sync 殼做）<!-- export-omit:end -->。開關與上表相同（`SCHEDULER_DISABLE`／`SCHEDULER_ENABLE`）。
 
 | 工作 | 排程 | 說明 |
 |---|---|---|
@@ -187,7 +187,7 @@ services:
 
 `s3` 連接器的憑證（`<env>_BUCKET`、`<env>_ACCESS_KEY_ID`、`<env>_SECRET_ACCESS_KEY`，選填 `<env>_ENDPOINT`、`<env>_REGION`；`<env>` 是 profile 裡的 `env`）寫進 `deploy/compose/.env`，scheduler 讀得到即可。
 
-常駐服務：`report-mark-web.service` → `web`；維運代理（`report-mark-ops-agent*.service`）、`report-mark-metrics.service`、`report-mark-alert@.service` 屬廷豐主機層。容器裡的工作失敗只寫進容器日誌（`docker compose logs scheduler`），沒有 `OnFailure` 告警。
+常駐服務：`report-mark-web.service` → `web`<!-- export-omit:begin -->；維運代理（`report-mark-ops-agent*.service`）、`report-mark-metrics.service`、`report-mark-alert@.service` 屬廷豐主機層<!-- export-omit:end -->。容器裡的工作失敗只寫進容器日誌（`docker compose logs scheduler`），沒有 `OnFailure` 告警。
 
 ### 互斥
 
@@ -205,7 +205,7 @@ services:
 | 告警 webhook | 關（`REPORT_MARK_ALERT_WEBHOOK` 空） | 設 webhook URL | 該 URL |
 | 通用 webhook 告警 | 關（`ALERT_WEBHOOK_URL` 空） | 設 webhook URL（見「監控對接」） | 該 URL |
 | 上傳的病毒碼更新 | 只在起了 clamav profile 時 | `docker compose --profile clamav up -d` | freshclam 連 ClamAV 的病毒碼伺服器 |
-| 來源主機信標 | 關（`HOST_BEACON_WATCH` 空） | 廷豐主機層，框架不用 | 物件儲存 |
+| 來源主機信標 | 關（`HOST_BEACON_WATCH` 空） | 廷豐主機層，框架不用 | 物件儲存 <!-- export-omit --> |
 | S3 相容來源（連接器） | 關（profile 沒有啟用 `kind = "s3"` 的連接器） | profile `[connectors]` 啟用＋`<env>_*` 憑證 | 設定的 bucket 端點 |
 | plugin 連接器 | 關（profile 沒有啟用 `kind = "plugin"` 的連接器） | profile 的 `plugins/<名稱>.py` | 由 plugin 決定（部署方自己的程式） |
 
@@ -213,11 +213,11 @@ services:
 
 ## 對外入口
 
-web 預設只發佈在 `127.0.0.1:8097`（`WEB_PUBLISH`）。對外上傳 API（`POST /external/v1/uploads`）的 body 最大到 `UPLOAD_MAX_BYTES`（預設 25 MiB），代理的 body 上限要比它寬（`deploy/nginx.conf` 給 `/external/` 30m），否則超限的請求拿到代理的 HTML 錯誤頁而不是 413 JSON。對外一律經部署方自備的 TLS 反向代理：非 localhost 的明文 HTTP 不會建立登入 session。代理不在同一台主機的 loopback 時，App 看到的來源是 Docker 網路的閘道位址，要把它列進 `REPORT_MARK_TRUSTED_PROXY_CIDRS`，或改用共享祕密 `REPORT_MARK_EDGE_SECRET`（代理注入 `X-Edge-Secret`），規則見 `docs/EXTERNAL_ACCESS.md`。對外 API（`/external/v1/*`）要讓代理透傳 `Authorization`。
+web 預設只發佈在 `127.0.0.1:8097`（`WEB_PUBLISH`）。對外上傳 API（`POST /external/v1/uploads`）的 body 最大到 `UPLOAD_MAX_BYTES`（預設 25 MiB），代理的 body 上限要比它寬<!-- export-omit:begin -->（`deploy/nginx.conf` 給 `/external/` 30m）<!-- export-omit:end -->，否則超限的請求拿到代理的 HTML 錯誤頁而不是 413 JSON。對外一律經部署方自備的 TLS 反向代理：非 localhost 的明文 HTTP 不會建立登入 session。代理不在同一台主機的 loopback 時，App 看到的來源是 Docker 網路的閘道位址，要把它列進 `REPORT_MARK_TRUSTED_PROXY_CIDRS`，或改用共享祕密 `REPORT_MARK_EDGE_SECRET`（代理注入 `X-Edge-Secret`）<!-- export-omit:begin -->，規則見 `docs/EXTERNAL_ACCESS.md`<!-- export-omit:end -->。對外 API（`/external/v1/*`）要讓代理透傳 `Authorization`。
 
 ## 監控對接
 
-框架只提供**應用層訊號**，接到部署方自己的監控（Prometheus＋Grafana、Zabbix、ELK 等）：`/metrics`、結構化 JSON 日誌、`/readyz`／`/healthz`、版本對帳與選配的 webhook 告警。廷豐的維運代理、主機信標、事件處理、探針與 Slack 屬廷豐主機層，框架不需要也不依賴它們。
+框架只提供**應用層訊號**，接到部署方自己的監控（Prometheus＋Grafana、Zabbix、ELK 等）：`/metrics`、結構化 JSON 日誌、`/readyz`／`/healthz`、版本對帳與選配的 webhook 告警。<!-- export-omit:begin -->廷豐的維運代理、主機信標、事件處理、探針與 Slack 屬廷豐主機層，框架不需要也不依賴它們。<!-- export-omit:end -->
 
 ### `GET /metrics`
 
@@ -248,7 +248,7 @@ Prometheus 文字格式，不登入。實作與約束在 `web/metrics.py` 的模
 | `report_mark_llm_breaker_active` | gauge | — | LLM 批次斷路器標記在有效期內（1）：批次會拒跑 |
 | `report_mark_batch_freshness_age_seconds` | gauge | `asset` | 批次資產最新產出距今（NaN＝從未產出）；`asset`：`pipeline`、`corpus`、`summary`、`takeaway`、`signal` |
 | `report_mark_batch_freshness_threshold_seconds` | gauge | `asset` | 停更門檻（0＝不告警） |
-| `report_mark_batch_freshness_stale` | gauge | `asset` | 停更（1）；判定與 `scripts/check_batch_freshness.py`、管理後台資料健康頁相同（含語料閘的抑制） |
+| `report_mark_batch_freshness_stale` | gauge | `asset` | 停更（1）；判定與 <!-- export-omit:begin -->`scripts/check_batch_freshness.py`、<!-- export-omit:end -->管理後台資料健康頁相同（含語料閘的抑制） |
 | `report_mark_upload_queue` | gauge | `state` | 研報上傳依狀態的筆數（狀態詞彙見 `app/services/uploads.py`） |
 | `report_mark_upload_oldest_in_flight_age_seconds` | gauge | — | 最舊一筆處理中（隔離、掃描中、待入庫、處理中）的上傳已等待的秒數 |
 | `report_mark_signal_source_up` | gauge | `source` | 上面兩組從 DB 算的值這次查不查得到（`freshness`、`uploads`）；查不到時該組指標清空，不留舊值 |
@@ -257,7 +257,7 @@ Prometheus 文字格式，不登入。實作與約束在 `web/metrics.py` 的模
 | `report_mark_build_info` | gauge | `commit`、`version`、`tree_clean`、`source` | 恆為 1；版本對帳看標籤 |
 | `process_*`、`python_*` | — | — | prometheus_client 內建的行程指標（記憶體、CPU、檔案描述元、GC） |
 
-`pipeline` 是 sync 殼的管線心跳（廷豐主機層）；容器部署沒有它，`report_mark_batch_freshness_stale{asset="pipeline"}` 會一直是 1，告警規則不要用它。從 DB 算的值快取 15 秒、每次查詢 5 秒逾時，抓取間隔建議 30 秒以上。
+`pipeline` 是 sync 殼的管線心跳（主機層）；容器部署沒有它，`report_mark_batch_freshness_stale{asset="pipeline"}` 會一直是 1，告警規則不要用它。從 DB 算的值快取 15 秒、每次查詢 5 秒逾時，抓取間隔建議 30 秒以上。
 
 **建議告警規則**（Prometheus；門檻依部署調）：
 
@@ -318,7 +318,7 @@ groups:
 
 ### 通用 webhook 告警（選配，預設關）
 
-設 `ALERT_WEBHOOK_URL` 才會送（URL 只經環境變數，不進 argv、不進日誌）。給沒有 Alertmanager、只想出事時往聊天室或工單系統丟一則的部署；與廷豐既有的 `REPORT_MARK_ALERT_WEBHOOK` 並存、互不取代。
+設 `ALERT_WEBHOOK_URL` 才會送（URL 只經環境變數，不進 argv、不進日誌）。給沒有 Alertmanager、只想出事時往聊天室或工單系統丟一則的部署<!-- export-omit:begin -->；與廷豐既有的 `REPORT_MARK_ALERT_WEBHOOK` 並存、互不取代<!-- export-omit:end -->。
 
 | 事件 | 何時送 |
 |---|---|

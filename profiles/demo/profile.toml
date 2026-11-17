@@ -1,5 +1,5 @@
-# 示範券商的 profile（虛構機構）：證明框架不依賴廷豐的設定，也是業務展示環境。
-# 每一項都刻意與 profiles/tingfong 不同：機構名、產品名、logo、強調色、市場子集、連接器、背景補齊。
+# 示範券商的 profile（虛構機構）：證明框架不依賴任何一家機構的設定，也是業務展示環境。
+# 每一項都刻意與框架預設不同：機構名、產品名、logo、強調色、市場子集、連接器、背景補齊。
 # 用法與端到端測試見 docs/CONTAINER_DEPLOYMENT.md「示範環境」；格式與驗證規則見 app/profile.py 的模組 docstring。
 # 機構與產品名稱是虛構的，logo 是自製的幾何圖形，不模仿任何真實機構。
 
@@ -13,7 +13,7 @@ logo_light = "logo.svg"
 logo_dark = "logo-dark.svg"
 favicon = "favicon.svg"
 
-# 強調色：青綠（框架預設是中性的石板藍、廷豐宣告鎏金）。鍵見 app/profile.py 的 ACCENT_TOKENS。
+# 強調色：青綠（框架預設是中性的石板藍）。鍵見 app/profile.py 的 ACCENT_TOKENS。
 [branding.colors.light]
 accent_text = "#0f6e6a"
 accent_strong = "#13857f"
@@ -71,7 +71,7 @@ max_reports_per_round = 10
 
 [instruments]
 # 個股代號格式（標註結果 stock_targets 的驗證規則，各市場格式的聯集）：台股 4～6 碼數字（含 00878 這類 ETF），
-# 美股 1～5 個大寫字母（含 BRK.B 這類股別後綴；小寫會轉大寫）。廷豐只收 4 碼數字。
+# 美股 1～5 個大寫字母（含 BRK.B 這類股別後綴；小寫會轉大寫）。框架預設只收 4 碼數字。
 [instruments.code_formats.TW]
 kind = "digits"
 min_length = 4
@@ -88,5 +88,5 @@ share_class = true
 catalog = "sources.toml"
 
 [brief]
-# 示範環境隨時可產生當日簡報（廷豐等到 9 時，因為券商早報上午才進來）；端到端測試因此不受執行時刻影響。
+# 示範環境隨時可產生當日簡報（框架預設等到 9 時，因為券商早報上午才進來）；端到端測試因此不受執行時刻影響。
 after_hour = 0
