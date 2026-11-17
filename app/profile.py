@@ -40,6 +40,8 @@
 
 市場代碼是框架固定的**標準市場代碼**（`app/services/tagging.py` 的 `MARKETS`，標註 prompt 與 `tests/test_tagging.py`
 逐字釘住）。profile 只能選子集（`[markets].enabled`，順序＝使用者端選單的顯示順序）與改顯示名稱，不能新增代碼。
+顯示名稱沒覆寫的取 `tagging.MARKET_DISPLAY`；每日簡報素材的市場標籤另有自己的預設詞表（`brief._MARKET_ZH`，
+例如「匯市」「總體與債市」），只有 `[markets.display_names]` 明確宣告的代碼覆寫它（`Markets.declared_names`）。
 個別 profile 與機構既有系統的代碼對齊（例如預設 profile 與 findb）是該 profile 的跨 repo 契約，不是框架的。
 
 ## 語系
@@ -174,6 +176,8 @@ class PromptParams:
 class Markets:
     enabled: tuple[str, ...]  # 使用者端啟用的標準市場代碼，順序＝顯示順序
     display_names: Mapping[str, str]  # 全部標準代碼 → 顯示名稱（未覆寫者取 tagging.MARKET_DISPLAY）
+    # 只含 `[markets.display_names]` 明確宣告的代碼。有自己預設詞表的地方（每日簡報的市場標籤）只讓這幾個覆寫。
+    declared_names: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
     def is_enabled(self, code: str | None) -> bool:
         return code in self.enabled
@@ -571,12 +575,13 @@ def _parse_markets(table: dict, ctx: _Ctx) -> Markets:
             raise ctx.error(f"enabled[{i}]", f"重複的市場代碼：{code!r}")
         seen.add(code)
     overrides = ctx.table(table, "display_names")
-    names = dict(MARKET_DISPLAY)
+    declared: dict[str, str] = {}
     for code in sorted(overrides):
         if code not in standard:
             raise ctx.error(f"display_names.{code}", f"不是標準市場代碼（可用：{' '.join(MARKETS)}）")
-        names[code] = ctx.string(overrides, code, max_len=20, key_label=f"display_names.{code}")
-    return Markets(enabled=tuple(enabled), display_names=MappingProxyType(names))
+        declared[code] = ctx.string(overrides, code, max_len=20, key_label=f"display_names.{code}")
+    return Markets(enabled=tuple(enabled), display_names=MappingProxyType({**MARKET_DISPLAY, **declared}),
+                   declared_names=MappingProxyType(declared))
 
 
 @_section("security")

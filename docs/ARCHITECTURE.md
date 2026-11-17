@@ -71,7 +71,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `reading/anchor.py`、`reading/queries.py`、`reading/schemas.py` | 閱讀頁：正典文字、引文錨定、相似研報 |
 | `radar/compute.py`、`radar/queries.py`、`radar/scale.py`、`radar/schemas.py`、`radar/types.py` | 觀點雷達：純 SQL 取訊號 ＋ Python 決定性聚合 |
 | `signal_extract.py` | 訊號擷取 prompt 與正規化（LLM 只擷取數值與論點證據，Python 判評等方向、幣別、狀態）；prompt 的 `instrument_code` 說明依 profile 的 `[instruments]` 在呼叫時渲染（`signal_instruction`） |
-| `brief.py` | 每日簡報素材、prompt、落庫 |
+| `brief.py` | 每日簡報素材、prompt、落庫；素材的市場標籤是簡報自己的詞表，profile `[markets.display_names]` 明確宣告的代碼（`Markets.declared_names`）覆寫 |
 | `visibility.py` | 研報隱藏／恢復與上傳草稿的發布狀態（`report_visibility`）：使用者讀取路徑共用的可見性片段 `visible_report_sql(別名)`／`visible_report_id_sql(欄位)`（`NOT EXISTS`，可直接 AND 進任何 WHERE；隱藏或 `publication <> 'published'` 都不可見），以及管理端的 `list_reports`／`set_visibility`（與稽核同交易，呼叫端 commit；對草稿拒絕隱藏與恢復，`ReportIsDraftError`→409）。`tests/test_visibility_guard.py` 以 AST 守門：檢索、閱讀、雷達、總覽、簡報、原檔各模組查語料表的函式或常數都要呼叫片段，否則列豁免並寫理由 |
 | `uploads.py` | 研報上傳（`report_upload`）的狀態與失敗類別詞彙（只放常數與純判斷）：`STATES`／`ACTIVE_STATES` 與 revision 0008 的 CHECK 和 partial unique index 逐字一致（`tests/test_uploads_vocab.py`），`FAILURE_KINDS` 對應刻意無 CHECK 的 `failure_kind` |
 | `upload_intake.py` | 研報上傳的收檔與查詢（`report_upload`）：檔名清理 `sanitize_filename`（純函式）、`create_upload`（同一筆交易：advisory lock → 重複檢查 → 每人每日與全站處理中配額 → INSERT `quarantined` → 稽核 `upload.create`；呼叫端 commit）、清單與詳情查詢、由 DB 推導的掃描器摘要。web 經 `deps.upload_intake` 呼叫；流程見 `docs/WORKFLOW.md`「研報上傳」 |

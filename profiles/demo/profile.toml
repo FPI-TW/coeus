@@ -42,6 +42,7 @@ system_name_en = "Demo Research"
 # 只啟用子集：篩選帶其他標準代碼（例如 HK）回 422 market_disabled；標到未啟用市場的研報照常可見。
 enabled = ["TW", "US", "MACRO"]
 
+# 顯示名稱：介面用；每日簡報素材的市場標籤也跟著這三個（沒宣告的代碼照用簡報自己的詞表，例如 FX「匯市」）。
 [markets.display_names]
 TW = "台股"
 US = "美股"

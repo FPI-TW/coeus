@@ -53,6 +53,8 @@ system_name_en = "廷豐研報"
 # 標準市場代碼全部啟用；順序＝使用者端選單的顯示順序。
 # 代碼與 findb 的 instruments.market 對齊，是廷豐的跨 repo 契約（tests/test_tagging.py 逐字釘住標準詞彙）。
 enabled = ["TW", "US", "HK", "CN", "WTX", "FX", "MACRO", "GLOBAL", "CRYPTO"]
+# 顯示名稱不覆寫：介面用標準名稱（tagging.MARKET_DISPLAY），每日簡報用簡報自己的詞表（「匯市」「總體與債市」…）。
+# 在 [markets.display_names] 宣告的代碼兩邊都會換掉，簡報素材就與現在不同。
 
 [security]
 totp_issuer = "廷豐智能研報"

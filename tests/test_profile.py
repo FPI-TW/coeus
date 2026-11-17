@@ -74,6 +74,7 @@ class TingfongProfileTests(unittest.TestCase):
         # 全部標準市場啟用；顯示名稱就是標準名稱（零回歸）。
         self.assertEqual(set(prof.markets.enabled), set(MARKETS))
         self.assertEqual(dict(prof.markets.display_names), MARKET_DISPLAY)
+        self.assertEqual(dict(prof.markets.declared_names), {})
         # 強調色明確宣告鎏金（框架預設是中性色票）；廷豐畫面逐變數不變由 tests/test_brand_accent.py 比對。
         self.assertEqual((prof.branding.colors_light["accent_strong"], prof.branding.colors_dark["accent_strong"]),
                          ("#ae7415", "#d4a64a"))
@@ -135,6 +136,7 @@ class DefaultsTests(_TmpCase):
         self.assertEqual(prof.markets.enabled, ("US", "TW"))
         self.assertEqual(prof.markets.label("TW"), "臺股")
         self.assertEqual(prof.markets.label("HK"), MARKET_DISPLAY["HK"])  # 未覆寫的取標準名稱
+        self.assertEqual(dict(prof.markets.declared_names), {"TW": "臺股"})  # 只有明確宣告的（簡報用）
         self.assertFalse(prof.markets.is_enabled("HK"))
         self.assertEqual(prof.prompt.system_name_en, "ACME Research")
 
