@@ -1067,7 +1067,7 @@ class ProfileQuestionSetTests(unittest.TestCase):
 
     def test_profile_key_only_when_given(self):
         self.assertNotIn("profile", self._config())
-        self.assertEqual(self._config(profile="tingfong")["profile"], "tingfong")
+        self.assertEqual(self._config(profile="demo")["profile"], "demo")
 
     def test_cli_default_dataset_is_unchanged(self):
         src = (REPO_ROOT / "eval" / "run_ragas.py").read_text(encoding="utf-8")
@@ -1077,7 +1077,7 @@ class ProfileQuestionSetTests(unittest.TestCase):
         self.assertEqual(dataset_arg(None, None), "eval/ragas_questions.json")
 
     def test_profile_and_dataset_together_stop_before_any_llm_call(self):
-        argv = ["run_ragas.py", "--profile", "tingfong", "--dataset", "eval/ragas_questions.json"]
+        argv = ["run_ragas.py", "--profile", "demo", "--dataset", "eval/ragas_questions.json"]
         err = io.StringIO()
         with mock.patch.object(sys, "argv", argv), mock.patch.object(rr, "require_llm_key") as req, \
                 mock.patch.object(rr, "run", side_effect=AssertionError("不應執行")), contextlib.redirect_stderr(err):
@@ -1087,6 +1087,7 @@ class ProfileQuestionSetTests(unittest.TestCase):
         req.assert_not_called()
         self.assertIn("擇一", err.getvalue())
 
+    # export-omit:begin
     def test_profile_reaches_run(self):
         seen = {}
 
@@ -1100,8 +1101,10 @@ class ProfileQuestionSetTests(unittest.TestCase):
             rr._main()
         self.assertEqual(seen["profile"], "tingfong")
         self.assertEqual(Path(seen["dataset"]).resolve(), (REPO_ROOT / "eval" / "ragas_questions.json").resolve())
+    # export-omit:end
 
 
+# export-omit:begin
 class BenchLoadProfileTests(unittest.TestCase):
     def test_profile_question_set(self):
         from scripts import bench_load
@@ -1109,3 +1112,4 @@ class BenchLoadProfileTests(unittest.TestCase):
         self.assertEqual(bench_load.profile_question_set("tingfong"), bench_load.QUESTION_SET.resolve())
         with self.assertRaisesRegex(RuntimeError, "profile 題集不能用"):
             bench_load.profile_question_set("nosuch")
+# export-omit:end

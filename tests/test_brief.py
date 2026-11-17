@@ -117,7 +117,7 @@ class WindowTests(unittest.TestCase):
 
 
 class ProfileScheduleTests(unittest.TestCase):
-    """作息取自 profile 的 [brief]：廷豐是 9 時、24 小時、7 天（框架化之前寫死的值）；其他 profile 可以改。"""
+    """作息取自 profile 的 [brief]：預設是 9 時、24 小時、7 天（框架化之前寫死的值）；其他 profile 可以改。"""
 
     def _main_args(self, argv, brief=None):
         from app import profile as P
@@ -139,7 +139,7 @@ class ProfileScheduleTests(unittest.TestCase):
             sys.argv = old
         return captured["args"]
 
-    def test_tingfong_defaults(self):
+    def test_default_profile_schedule(self):
         args = self._main_args([])
         self.assertEqual((args.after_hour, args.max_lookback_days), (9, 7))
         self.assertEqual(generate_brief.resolve_window(None, NOW), (NOW - timedelta(hours=24), NOW))

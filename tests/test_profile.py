@@ -60,7 +60,8 @@ class _TmpCase(unittest.TestCase):
         return msg
 
 
-class TingfongProfileTests(unittest.TestCase):
+class ProfileLoadingTests(unittest.TestCase):
+    # export-omit:begin
     def test_default_profile_is_tingfong(self):
         self.assertEqual(P.resolve_profile_dir(""), REPO / "profiles" / "tingfong")
         prof = P.get_profile()
@@ -79,6 +80,7 @@ class TingfongProfileTests(unittest.TestCase):
                          ("#ae7415", "#d4a64a"))
         self.assertEqual(prof.institution.website, "https://research.tingfong.com")
         self.assertEqual(sorted(prof.branding.assets()), ["favicon.svg", "logo.png"])
+    # export-omit:end
 
     def test_get_profile_caches_until_reset(self):
         first = P.get_profile()
@@ -291,10 +293,12 @@ class BackfillSectionTests(_TmpCase):
         self.assertEqual((bf.recent_months, bf.background_enabled, bf.daily_token_limit, bf.max_reports_per_round),
                          (12, False, 2_000_000, 100))
 
+    # export-omit:begin
     def test_tingfong_keeps_background_off(self):
         """廷豐已全量跑完派生：背景補齊關（scheduler 的 backfill-tiers 是 no-op），sync 鏈照舊。"""
         bf = P.get_profile().backfill
         self.assertEqual((bf.recent_months, bf.background_enabled), (12, False))
+    # export-omit:end
 
     def test_values(self):
         bf = self.load(MINIMAL + "[backfill]\nrecent_months = 6\nbackground_enabled = true\n"
@@ -344,11 +348,13 @@ class LocaleTests(_TmpCase):
         self.assertRejected(MINIMAL + '[locale]\nfallback = "en"\n', "[locale].fallback", "未知的鍵")
         self.assertRejected(MINIMAL + 'name_en = ""\n', "[institution].name_en", "空字串")
 
+    # export-omit:begin
     def test_tingfong_keeps_chinese_default(self):
         """廷豐 profile：預設仍是中文（零回歸），兩種語系都可選；英文介面沿用原名。"""
         prof = P.load_profile(REPO / "profiles" / "tingfong")
         self.assertEqual(prof.locale.default, "zh-Hant")
         self.assertEqual(set(prof.locale.available), {"zh-Hant", "en"})
+    # export-omit:end
 
 
 class InstrumentsSectionTests(_TmpCase):
@@ -359,10 +365,12 @@ class InstrumentsSectionTests(_TmpCase):
         self.assertEqual(rule.code_formats, (P.CodeFormat(market="TW", kind="digits", min_length=4, max_length=4),))
         self.assertEqual([rule.normalize_code(v) for v in ("2330", "23300", "NVDA")], ["2330", None, None])
 
+    # export-omit:begin
     def test_tingfong_declares_the_pre_framework_rule(self):
         prof = P.load_profile(REPO / "profiles" / "tingfong")
         self.assertEqual(prof.instruments, P.Instruments())
         self.assertEqual(prof.instruments.digit_lengths(), (4, 4))
+    # export-omit:end
 
     def test_parses_formats(self):
         rule = self.load(MINIMAL + """
@@ -468,10 +476,10 @@ class SourcesSectionTests(_TmpCase):
 class BriefSectionTests(_TmpCase):
     """[brief]：每日簡報的作息（scripts/generate_brief.py）。"""
 
-    def test_defaults_and_tingfong(self):
+    def test_defaults(self):
         self.assertEqual(self.load(MINIMAL).brief,
                          P.Brief(after_hour=9, default_lookback_hours=24, max_lookback_days=7))
-        self.assertEqual(P.load_profile(REPO / "profiles" / "tingfong").brief, P.Brief())
+        self.assertEqual(P.load_profile(REPO / "profiles" / "tingfong").brief, P.Brief())  # export-omit
 
     def test_values_and_rejections(self):
         brief = self.load(MINIMAL + "[brief]\nafter_hour = 0\ndefault_lookback_hours = 12\nmax_lookback_days = 3\n")

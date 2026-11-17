@@ -471,9 +471,11 @@ class ProbeTests(unittest.TestCase):
             pid_file.write_text("garbage")
             self.assertFalse(script.sync_running(pid_file))
 
+    # export-omit:begin
     def test_sync_pid_file_matches_sync_script(self):
         sh = (REPO_ROOT / "scripts" / "sync_new_reports.sh").read_text(encoding="utf-8")
         self.assertIn(f'LOCK="{script.SYNC_PID_FILE.relative_to(REPO_ROOT).as_posix()}"', sh)
+    # export-omit:end
 
     def test_meminfo(self):
         with tempfile.TemporaryDirectory() as d:
@@ -597,14 +599,14 @@ class StaticContractTests(unittest.TestCase):
         self.assertEqual(rr.DATASET, DATASET)
 
     def test_profile_question_sets(self):
-        """有提供才用：目前的 profile 自帶凍結題集就比那一份；廷豐（題集留在 eval/）照舊用 rr.DATASET。"""
+        """有提供才用：目前的 profile 自帶凍結題集就比那一份；沿用 repo 內 eval/ 題集的 profile 照舊用 rr.DATASET。"""
         from test_eval_question_draft import NOW, _draft
 
         from eval import profile_eval as pe
         from eval import question_draft as qd
 
         self.assertEqual(script.resolve_dataset(None, {}), rr.DATASET)
-        self.assertEqual(script.resolve_dataset("tingfong", {}), rr.DATASET.resolve())
+        self.assertEqual(script.resolve_dataset("tingfong", {}), rr.DATASET.resolve())  # export-omit
         with tempfile.TemporaryDirectory() as td:
             profile = Path(td) / "demo"
             (profile / "eval").mkdir(parents=True)
@@ -634,6 +636,7 @@ class StaticContractTests(unittest.TestCase):
         self.assertTrue(os.environ["RETRIEVAL_REGRESSION_BASELINE"].startswith("/nonexistent/"))
         self.assertEqual(str(rr.baseline_path()), os.environ["RETRIEVAL_REGRESSION_BASELINE"])
 
+    # export-omit:begin
     def test_unit_files(self):
         systemd = REPO_ROOT / "deploy" / "systemd"
         service = (systemd / "report-mark-retrieval-regression.service").read_text(encoding="utf-8")
@@ -655,6 +658,7 @@ class StaticContractTests(unittest.TestCase):
         # 不撞 sync（00/3 整點起跑，實測約 20 分鐘）：不在 sync 小時的前 30 分鐘內。
         self.assertFalse(int(hh) % 3 == 0 and int(mm) < 30, cal)
         self.assertIn("Persistent=false", tlive)
+    # export-omit:end
 
 
 if __name__ == "__main__":

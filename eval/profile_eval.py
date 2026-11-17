@@ -11,9 +11,9 @@
 - `eval.toml`（選填）：上線驗收（`scripts/eval_gate.py`）的設定，鍵見 `load_eval_config`。驗證 fail-closed：
   未知鍵、型別錯、豁免缺理由一律拋錯，不做「認不得就忽略」。
 
-**廷豐不搬家**：廷豐的凍結題集仍是 `eval/ragas_questions.json`（`tests/test_eval_question_contract.py` 守內容、
-基準線記它的 sha256）。`profiles/tingfong/eval/eval.toml` 以 `[questions].legacy_repo_path` 指回它，所以
-`--profile tingfong` 與不帶 `--profile` 讀到的是同一份檔、同一個 sha256。不指定 `--profile` 時各入口的行為與
+**沿用 repo 內的題集**：`eval.toml` 的 `[questions].legacy_repo_path` 指向 repo 內既有的題集（例如不帶 `--profile`
+時的預設題集 `eval/ragas_questions.json`，`tests/test_eval_question_contract.py` 守內容、基準線記它的 sha256），
+這樣的 profile 帶 `--profile` 與不帶讀到的是同一份檔、同一個 sha256。不指定 `--profile` 時各入口的行為與
 加入本模組之前逐字相同。
 
 **刻意只 import 標準函式庫與 `eval.question_contract`**：容器的 scheduler（`deploy/container/scheduler.py`）
@@ -41,7 +41,7 @@ PROFILES_DIR = REPO_ROOT / "profiles"
 # 這裡不 import app.profile，理由見模組 docstring。
 PROFILE_DIR_ENV = "PROFILE_DIR"
 DEFAULT_PROFILE_DIR = "profiles/tingfong"
-# 不帶 --profile 時各入口的預設題集（＝廷豐的凍結題集）。
+# 不帶 --profile 時各入口的預設題集（沿用 repo 內題集的 profile 指向的就是這一份）。
 DEFAULT_DATASET_REL = "eval/ragas_questions.json"
 
 EVAL_DIR = "eval"
@@ -102,7 +102,7 @@ class ProfileDataset:
     path: Path
     questions: list[dict]
     sha256: str
-    manifest: dict | None  # None＝沿用 repo 內既有題集（廷豐），由該題集自己的測試守內容
+    manifest: dict | None  # None＝沿用 repo 內既有題集，由該題集自己的測試守內容
 
     @property
     def rel_path(self) -> str:
@@ -144,7 +144,7 @@ def active_profile_dir(env: Mapping[str, str] | None = None) -> Path:
 
 
 def own_questions_path(profile_dir: Path) -> Path | None:
-    """profile 自己帶的凍結題集（`eval/questions.json`）；沒有就回 None。廷豐的沿用題集不算。"""
+    """profile 自己帶的凍結題集（`eval/questions.json`）；沒有就回 None。沿用 repo 內題集的不算。"""
     path = Path(profile_dir) / EVAL_DIR / QUESTIONS_FILE
     return path if path.is_file() else None
 
@@ -170,7 +170,7 @@ def load_eval_config(profile_dir: Path) -> EvalConfig:
 
     ```toml
     [questions]
-    legacy_repo_path = "eval/ragas_questions.json"   # 只給沿用 repo 內既有題集的 profile（廷豐）
+    legacy_repo_path = "eval/ragas_questions.json"   # 只給沿用 repo 內既有題集的 profile
 
     [gate]
     judge_lineage = "gpt-6-luna-2026-11"   # 選填：上線驗收要求的量尺系譜（結果不是這個系譜＝不可比）
