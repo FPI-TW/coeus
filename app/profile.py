@@ -59,8 +59,8 @@ SQL 端由 `app/services/doc_types.py` 的 `doc_type_enabled_sql` 依這份設�
 
 ## 個股代號、發行機構、簡報作息、檔名規則
 
-這幾項是機構的假設，由 profile 宣告。section 缺席時的框架預設＝預設 profile 宣告的值，也就是框架化之前寫死在
-程式裡的值（零回歸）。
+這幾項是機構的假設，由 profile 宣告；預設 profile 宣告的是框架化之前寫死在程式裡的值（零回歸）。`[instruments]`、
+`[brief]`、`[filenames]` 缺席時的框架預設就是這些值；`[sources]` 缺席是空名單（名單是機構專屬的資料，框架不帶）。
 
 - `[instruments]`：個股代號格式（`[instruments.code_formats.<標準市場代碼>]`，`kind` 是 `CODE_FORMAT_KINDS` 之一＋
   長度；資料形狀 `CodeFormat` 與框架預設 `DEFAULT_CODE_FORMATS` 在 `app/services/tagging.py`，因為 `tagging` 不
