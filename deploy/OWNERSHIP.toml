@@ -15,7 +15,8 @@
 #   維運代理的安裝路徑、/etc/default 的範例、nginx include、腳本互相 source 的路徑），辦公室主機的主 checkout
 #   就是部署目錄，搬了就是改部署。
 # - 框架的腳本可以被主機層的 unit 呼叫（例如 db_backup.sh），反過來框架不得依賴主機層的檔案
-#   （容器排程 deploy/container/scheduler.py 的 JOBS 只呼叫 framework 的腳本，同一支測試對帳）。
+#   （容器排程 deploy/container/scheduler.py 的 JOBS 只呼叫 framework 的腳本；框架的 Python 不 import 主機層的
+#   腳本與 ops_agent 模組，同一支測試對帳）。
 [framework]
 files = [
   # 本清單
@@ -31,6 +32,10 @@ files = [
   "deploy/demo/docker-compose.demo.yml",
   "deploy/demo/docker-compose.real-llm.yml",
   "deploy/demo/fake_llm.py",
+  # clamd／freshclam 設定：框架 compose 的 clamav 服務唯讀掛載（deploy/compose/docker-compose.yml），主機層的
+  # 獨立 clamd 也用同一份
+  "deploy/clamav/conf/clamd.conf",
+  "deploy/clamav/conf/freshclam.conf",
   # 框架的批次、評測、維運與資料工具（sync_new_reports.py 是增量匯入的核心，連接器入庫與 sync 殼共用）
   "scripts/_claude_cli.py",
   "scripts/_claude_lock.py",
@@ -101,6 +106,12 @@ files = [
   "scripts/select_sample.py",
   "scripts/sync_new_reports.py",
   "scripts/tag_all_cli.py",
+  # web 與維運代理共用的協定、catalog 解析與日誌清洗（web/ops_client.py、app/services/ops_monitoring.py import）；
+  # 代理的常駐行程與動作仍屬主機層
+  "ops_agent/__init__.py",
+  "ops_agent/backends.py",
+  "ops_agent/catalog.py",
+  "ops_agent/protocol.py",
 ]
 
 [tingfong_host]
@@ -114,9 +125,7 @@ files = [
   "deploy/install_units.sh",
   # 廷豐 R2 bucket 的 CORS 設定
   "deploy/r2-cors-research.json",
-  # 辦公室主機的 ClamAV（獨立 compose 專案 report-mark-clamav；框架的 compose 另有 clamav 服務）
-  "deploy/clamav/conf/clamd.conf",
-  "deploy/clamav/conf/freshclam.conf",
+  # 辦公室主機的 ClamAV（獨立 compose 專案 report-mark-clamav；框架的 compose 另有 clamav 服務，共用 conf/）
   "deploy/clamav/docker-compose.yml",
   # EC2（正式環境）的 AWS 基礎設施（資源名沿用 staging 這個歷史命名）
   "deploy/aws/README.md",
@@ -210,13 +219,9 @@ files = [
   "deploy/systemd/report-mark-upload.service",
   "deploy/systemd/report-mark-upload.timer",
   "deploy/systemd/report-mark-web.service",
-  # 維運代理（從 root 擁有的 /opt/report-mark-ops/ 執行）
-  "ops_agent/__init__.py",
+  # 維運代理的常駐行程與動作（從 root 擁有的 /opt/report-mark-ops/ 執行；web 共用的協定與解析在 framework）
   "ops_agent/__main__.py",
   "ops_agent/actions.py",
-  "ops_agent/backends.py",
-  "ops_agent/catalog.py",
-  "ops_agent/protocol.py",
   "ops_agent/runner.py",
   "ops_agent/server.py",
   # 健康探針、事件處理（P4／P5、Slack）與 oneshot 查驗
