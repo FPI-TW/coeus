@@ -299,6 +299,16 @@ class BrandingTimezoneTests(_ProfileCase):
         self.assertEqual(branding_payload()["timezone"],
                          {"name": "Asia/Hong_Kong", "label": "香港", "label_en": "Hong Kong"})
 
+    def test_frontend_schema_reads_the_same_keys(self):
+        src = (REPO / "frontend" / "src" / "lib" / "branding.ts").read_text(encoding="utf-8")
+        block = re.search(r"timezone: z\.object\(\{(.*?)\}\)", src, re.S)
+        self.assertIsNotNone(block)
+        self.assertEqual(set(re.findall(r"(\w+): z\.", block.group(1))), {"name", "label", "label_en"})
+
+    def test_frontend_default_matches_backend_default(self):
+        src = (REPO / "frontend" / "src" / "i18n" / "index.ts").read_text(encoding="utf-8")
+        self.assertIn(f"export const DEFAULT_TIME_ZONE = '{P.DEFAULT_TIMEZONE}'", src)
+
 
 if __name__ == "__main__":
     unittest.main()
