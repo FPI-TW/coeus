@@ -41,11 +41,13 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+from scripts import demo_corpus  # noqa: E402
 
 BASE_COMPOSE = ROOT / "deploy" / "compose" / "docker-compose.yml"
 DEMO_COMPOSE = ROOT / "deploy" / "demo" / "docker-compose.demo.yml"
@@ -56,7 +58,6 @@ DEFAULT_IMAGE = "report-mark:e2e"
 ADMIN_USER = "e2e-admin"
 BUCKET = "demo-research"
 PREFIX = "research/"
-TAIPEI = timezone(timedelta(hours=8))
 INVALID_CITATION = "（無效引用）"
 
 EXIT_OK, EXIT_FAILED, EXIT_ENV = 0, 1, 2
@@ -140,7 +141,8 @@ def write_env(work: Path, *, image: str, web_port: int, s3_port: int, real_llm: 
     backups.chmod(0o777)  # 容器裡是 UID 10001；暫存目錄不能 chown（不用 sudo），只好放寬
     values = {
         "REPORT_MARK_IMAGE": image,
-        "TZ": "Asia/Taipei",
+        # 與 profile 的業務時區一致（entrypoint 對 scheduler 要求兩者相同）。
+        "TZ": demo_corpus.demo_tz().key,
         "POSTGRES_PASSWORD": secrets.token_hex(16),
         "BACKUP_HOST_DIR": str(backups),
         "PROFILE_HOST_DIR": str(PROFILE_DIR),
@@ -399,9 +401,8 @@ def run(args) -> int:
     started = time.monotonic()
     log(f"project={project} work={work} web=127.0.0.1:{web_port} s3=127.0.0.1:{s3_port}")
     try:
-        from scripts import demo_corpus
-
-        anchor = date.fromisoformat(args.anchor_date) if args.anchor_date else datetime.now(TAIPEI).date()
+        anchor = (date.fromisoformat(args.anchor_date) if args.anchor_date
+                  else datetime.now(demo_corpus.demo_tz()).date())
         if args.corpus:
             corpus_root = Path(args.corpus)
         else:
@@ -468,7 +469,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--project", default=None, help="compose project 名稱（預設 e2e-<亂數>）")
     ap.add_argument("--work-dir", default=None, help="暫存目錄的上層（預設系統暫存目錄）")
     ap.add_argument("--corpus", default=None, help="已產生好的語料資料夾（demo_corpus.py --out 的那一層）")
-    ap.add_argument("--anchor-date", default=None, help="合成語料的日期錨點（預設今天，台北時間）")
+    ap.add_argument("--anchor-date", default=None, help="合成語料的日期錨點（預設今天，示範 profile 的業務時區）")
     ap.add_argument("--sync-timeout", type=int, default=2400, help="connector_sync／backfill 的逾時秒數")
     return run(ap.parse_args(argv))
 

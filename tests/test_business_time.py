@@ -4,6 +4,7 @@
 - 非 +8、有日光節約的時區（America/New_York）下，每日配額、用量、分析、簡報、匯出檔名的日界都依它切。
 - 時區在呼叫時取值：同一個行程換 profile（`reset_profile_cache()`）就換時區，沒有 import 期凍結的常數。
 - SQL 的 `AT TIME ZONE` 一律是綁定參數，不內插時區名稱；認不得的名稱在載入 profile 時就拒絕。
+- 容器 entrypoint 的 `TZ` 與 profile 的關係（`resolve_tz`）。
 """
 import json
 import os
@@ -308,6 +309,61 @@ class BrandingTimezoneTests(_ProfileCase):
     def test_frontend_default_matches_backend_default(self):
         src = (REPO / "frontend" / "src" / "i18n" / "index.ts").read_text(encoding="utf-8")
         self.assertIn(f"export const DEFAULT_TIME_ZONE = '{P.DEFAULT_TIMEZONE}'", src)
+
+
+# ── 容器：TZ 與 profile ───────────────────────────────────────────────────
+
+
+class EntrypointTzTests(NewYorkCase):
+    def setUp(self):
+        super().setUp()
+        from deploy.container import entrypoint
+
+        self.ep = entrypoint
+        self.env = {"PROFILE_DIR": str(self.root)}
+
+    def test_unset_tz_follows_the_profile(self):
+        for tz in (None, "", "  "):
+            env = dict(self.env) if tz is None else {**self.env, "TZ": tz}
+            self.assertEqual(self.ep.resolve_tz("scheduler", env), ("America/New_York", None))
+
+    def test_matching_tz_passes(self):
+        self.assertEqual(self.ep.resolve_tz("scheduler", {**self.env, "TZ": "America/New_York"}),
+                         ("America/New_York", None))
+
+    def test_mismatch_refuses_scheduler_and_warns_others(self):
+        tz, problem = self.ep.resolve_tz("scheduler", {**self.env, "TZ": "Asia/Taipei"})
+        self.assertIsNone(tz)
+        self.assertIn("America/New_York", problem)
+        self.assertIn("Asia/Taipei", problem)
+        with patch.object(self.ep, "log") as log:
+            self.assertEqual(self.ep.resolve_tz("web", {**self.env, "TZ": "Asia/Taipei"}), ("Asia/Taipei", None))
+        self.assertIn("不同", log.call_args.args[0])
+
+    def test_broken_profile_refuses(self):
+        (self.root / "profile.toml").write_text(textwrap.dedent(MINIMAL) + '[locale]\ntimezone = "Mars/Olympus"\n',
+                                                encoding="utf-8")
+        tz, problem = self.ep.resolve_tz("web", self.env)
+        self.assertIsNone(tz)
+        self.assertIn("timezone", problem)
+
+    def test_main_sets_tz_for_execed_roles_and_refuses_mismatched_scheduler(self):
+        execs = []
+        env = {**self.env, "REPORT_MARK_DB_URL": "postgresql+asyncpg://u:p@postgres:5432/research",
+               "REPORT_MARK_SESSION_SECRET": "s" * 40}
+        rc = self.ep.main(["entrypoint", "web"], env, execvpe=lambda f, a, e: execs.append(e), gate=lambda e: 0)
+        self.assertEqual((rc, execs[0]["TZ"]), (0, "America/New_York"))
+        with patch.object(self.ep, "log"):
+            rc = self.ep.main(["entrypoint", "scheduler"], {**env, "TZ": "Asia/Taipei"},
+                              execvpe=lambda f, a, e: execs.append(e), gate=lambda e: 0)
+        self.assertEqual((rc, len(execs)), (self.ep.EXIT_REFUSED, 1))
+
+    def test_compose_and_image_leave_tz_to_the_profile(self):
+        compose = (REPO / "deploy" / "compose" / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("TZ: ${TZ:-}", compose)
+        self.assertNotIn("Asia/Taipei", compose)
+        dockerfile = (REPO / "deploy" / "container" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"^\s*TZ=", dockerfile, re.M))
 
 
 if __name__ == "__main__":
