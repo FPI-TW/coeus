@@ -6,8 +6,11 @@
 #                  「廷豐」／tingfong（tests/test_framework_branding.py 掃描；例外逐條寫在那支測試的白名單）。
 #   tingfong_host  廷豐 profile 的主機層：廷豐兩台主機（辦公室主機＝測試環境、EC2＝正式環境）的 systemd unit、
 #                  sudoers、polkit、維運代理、主機信標、探針與事件、NAS 掛載、LINE bot 監看、sync 殼（NAS／R2
-#                  來源段）、對外邊緣（nginx、cloudflared）、AWS 基礎設施。框架的容器部署不用它們。
+#                  來源段）、對外邊緣（nginx、cloudflared）、AWS 基礎設施。框架的容器部署不用它們。另含源頭 repo
+#                  自己的歸屬／交付清單（本檔、deploy/EXPORT.toml）與交付打包工具。
 #
+# framework 的檔案進交付給其他券商的原始碼，tingfong_host 的不進（scripts/export_framework.py，其他目錄的歸屬在
+# deploy/EXPORT.toml）。
 # 規則（tests/test_ownership.py 守）：
 # - 逐檔列出、不用萬用字元：新增檔案沒有歸類就紅，歸類是一個要寫下來的決定。
 # - 每個檔案只能出現在一類；列了但已不存在的檔案也紅（刪檔、改名時同步改這裡）。
@@ -19,8 +22,6 @@
 #   腳本與 ops_agent 模組，同一支測試對帳）。
 [framework]
 files = [
-  # 本清單
-  "deploy/OWNERSHIP.toml",
   # 容器部署（映像、compose、排程與入口）與示範環境
   "deploy/compose/.env.example",
   "deploy/compose/docker-compose.yml",
@@ -251,4 +252,8 @@ files = [
   "scripts/analyze_resource_usage.py",
   # 辦公室主機的容器 DB 專用（docker exec report-mark-postgres）
   "scripts/ingest_lowio.sh",
+  # 源頭 repo 的歸屬清單、交付清單與交付打包工具（不隨交付物）
+  "deploy/OWNERSHIP.toml",
+  "deploy/EXPORT.toml",
+  "scripts/export_framework.py",
 ]

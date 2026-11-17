@@ -492,3 +492,4 @@ EC2 是正式環境（資源名與部分檔名裡的 staging 是歷史命名）�
 | `docs/LINEBOT_ALWAYS_ON.md` | 廷豐辦公室主機的 LineBot 常駐與監控 <!-- export-omit --> |
 | `docs/CAPACITY.md` | 硬體用量量測與上雲選型 |
 | [AWS 基礎設施（廷豐正式環境）](deploy/aws/README.md) | CloudFormation 管理的 EC2／RDS（正式環境；資源名沿用 staging）、change set 與驗收流程 <!-- export-omit --> |
+| `docs/FRAMEWORK_EXPORT.md` | 交付原始碼給其他券商：打包工具、交付清單、交付版的改寫與驗證 <!-- export-omit --> |

@@ -314,3 +314,12 @@ metrics:  ## 分析取樣結果 → 分位數與上雲選型（用法：make met
 # 先 --dry-run 看計畫再拿掉；跑完照它印的指令用 --bench 框窗期換算單條成本。
 metrics-bench:  ## 受控負載壓測（會用掉 LLM 額度；用法：make metrics-bench BENCH_ARGS="--limit 4")
 	/usr/bin/python3 scripts/bench_load.py $(BENCH_ARGS)
+
+# export-omit:begin
+# ───── 交付打包（源頭 repo 專用，不隨交付物）─────
+# 從 commit 產出交給其他券商的框架原始碼並在暫存目錄驗證（docs/FRAMEWORK_EXPORT.md）。
+# 內容只取自 commit，不讀工作樹；輸出預設在 data/export/。例：make export EXPORT_ARGS="--commit v1.2 --frontend"
+.PHONY: export
+export:  ## 產出框架交付物並驗證（EXPORT_ARGS="--commit … --license … --frontend"）
+	uv run python scripts/export_framework.py $(EXPORT_ARGS)
+# export-omit:end
