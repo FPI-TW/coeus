@@ -103,7 +103,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `entitlement.py` | API 用戶端的研報 allowlist：`Entitlement`（`market` 必填、其餘維度 None＝不限；維度內 OR、維度間 AND）、`sql(別名)` 產生 `ent_` 前綴的綁定參數、`allows()` 為逐項等價的 Python 版。由 `hybrid_search` 傳進 store 的 dense 與字面兩路 WHERE，**不在 Python 事後過濾**（`scan`／`cap` 名額會被不可見的研報吃掉）；`None` 時 SQL 與參數逐字不變 |
 | `original_file_url.py` | 研報原檔的 presign（`mint_original_url`）：object key 必須等於 `original_object_key(file_hash, file_name)`、`verify_object=True` 時 HEAD 驗 metadata sha256 才簽；閱讀頁原檔 `/api/report/{report_id}/file` 與對外 `file-url` 共用。對外搜尋結果的逐筆連結用 `verify_object=False`（只檢查 canonical key、不逐筆 HEAD） |
 | `tagging.py` | 標準市場代碼（`MARKETS`，`tests/test_tagging.py` 逐字釘住；profile 只能選子集與改顯示名稱）、商品類型、期貨標的詞表、個股代號格式（`CodeFormat`、`DEFAULT_CODE_FORMATS`）、標註 prompt（`tag_instruction(code_formats)`：代號說明由 profile 的格式產生，其餘文字固定；`TAG_INSTRUCTION` 是預設格式的版本）。代碼與 findb 對齊是廷豐 profile 的跨 repo 契約 |
-| `filename.py` | 檔名解析：發行機構、日期、行政文件判定；發行機構的比對規則（檔名 token、內文指紋「最早出現者勝」、`resolve_source` 的優先序、`source_display`），名單在 profile 的 `[sources].catalog`（沒有名單＝不推斷） |
+| `filename.py` | 檔名解析：個股代號（寫法與長度依 profile 的 `[instruments]`：中文名＋數字、`<代號> TT` 限 TW 純數字格式、`<代號> US` 限 US 字母格式，抓到的值再經格式驗證）、發行機構、日期、行政文件判定；發行機構的比對規則（檔名 token、內文指紋「最早出現者勝」、`resolve_source` 的優先序、`source_display`），名單在 profile 的 `[sources].catalog`（沒有名單＝不推斷） |
 | `db.py` | async engine、`SessionFactory`、`relax_statement_timeout`、pgvector 版本守門 |
 | `schema_migrations.py` | Alembic migration 的共用規則（`db/migrations/env.py`、`scripts/schema_baseline.py`、測試共用）：目標識別與逐字確認、baseline 凍結、drift 比對；見 §8 |
 | `object_storage.py` | R2 物件儲存（`local`／`hybrid`／`r2`），全同步方法，FastAPI 端要 `asyncio.to_thread` |

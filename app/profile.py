@@ -62,13 +62,15 @@ SQL 端由 `app/services/doc_types.py` 的 `doc_type_enabled_sql` 依這份設�
 
 - `[instruments]`：個股代號格式（`[instruments.code_formats.<標準市場代碼>]`，`kind` 是 `CODE_FORMAT_KINDS` 之一＋
   長度；資料形狀 `CodeFormat` 與框架預設 `DEFAULT_CODE_FORMATS` 在 `app/services/tagging.py`，因為 `tagging` 不
-  import 本模組）。用在四處：
+  import 本模組）。用在：
   - 標註結果的 `stock_targets` 只留符合其一的代號（`tagging.normalize_stock_targets`，規則由呼叫端傳入
     `get_profile().instruments.normalize_code`）。
   - 標註 prompt 的代號說明：各市場說明裡的格式與範例、`stock_targets` 的格式要求、輸出範例的代號
     （`tagging.tag_instruction(code_formats)`）；訊號擷取 prompt 的 `instrument_code` 說明
     （`signal_extract.signal_instruction`）。只有這些片段由格式推導，其餘文字固定，profile 不能覆寫。
   - 總覽題從問句抓代號，依純數字格式的長度。
+  - 檔名抓個股代號（`app/services/filename.py`）：中文名＋數字依純數字格式的長度，`1216 TT` 只在宣告了 TW 純數字
+    格式時認，`NVDA US` 只在宣告了 US 字母格式時認；抓到的值再經 `normalize_code`。
   section 缺席＝只收 4 碼數字；預設 profile 宣告同一份格式，prompt 與框架化之前逐字相同
   （`tests/test_instrument_prompts.py` 對 golden）。
 - `[sources]`：`catalog` 引用 profile 目錄裡的名單檔（例如預設 profile 的 `sources.toml`），內容是檔名 token、
