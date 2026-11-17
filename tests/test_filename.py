@@ -97,8 +97,8 @@ class MtimeReportDateTests(unittest.TestCase):
 
 
 class _WithProfile(unittest.TestCase):
-    """以指定的 profile 目錄解析（`PROFILE_DIR`＋清快取）；`PROFILE` 是 None 時寫一份只帶 `INSTRUMENTS` 的
-    暫存 profile。"""
+    """以指定的 profile 目錄解析（`PROFILE_DIR`＋清快取）；`PROFILE` 是 None 時寫一份只帶 `INSTRUMENTS`（其他
+    section 也可以）的暫存 profile。"""
 
     PROFILE: Path | None = None
     INSTRUMENTS = ""
@@ -211,6 +211,39 @@ class MixedDigitFormatsTests(_WithProfile):
         self.assertEqual(self.code("某公司(12345) 與 鴻海(2317).pdf"), ("2317", "鴻海", ["NAME_CODE"]))
         self.assertEqual(self.code("12345台積電.pdf"), (None, None, []))
         self.assertEqual(self.code("600519 TT.pdf"), (None, None, []))
+
+
+
+class TingfongAdminKeywordTests(_WithProfile):
+    """行政文件的檔名關鍵字來自 profile 的 `[filenames]`；廷豐宣告的是框架預設（框架化之前寫死的清單）。"""
+
+    PROFILE = REPO_ROOT / "profiles" / "tingfong"
+
+    def test_keywords(self):
+        for name in ("人事異動公告.pdf", "Webcast flyer.pdf", "期交所部位限制.pdf", "大樓施工通知.pdf"):
+            with self.subTest(name=name):
+                self.assertTrue(parse_filename(name).is_admin)
+        self.assertFalse(parse_filename("Org chart 2026.pdf").is_admin)
+        self.assertFalse(parse_filename("鴻海(2317)_報告.pdf").is_admin)
+
+
+class DemoAdminKeywordTests(_WithProfile):
+    PROFILE = REPO_ROOT / "profiles" / "demo"
+
+    def test_keywords(self):
+        for name in ("Org Chart 2026.pdf", "HOLIDAY SCHEDULE.pdf", "人事異動公告.pdf"):
+            with self.subTest(name=name):
+                self.assertTrue(parse_filename(name).is_admin)
+        for name in ("期交所部位限制.pdf", "TSMC earnings announcement review.pdf", "20251104_cobalt_nvda_17.pdf"):
+            with self.subTest(name=name):
+                self.assertFalse(parse_filename(name).is_admin)
+
+
+class EmptyAdminKeywordTests(_WithProfile):
+    INSTRUMENTS = "[filenames]\nadmin_keywords = []\n"
+
+    def test_empty_list_disables_filename_detection(self):
+        self.assertFalse(parse_filename("人事異動公告.pdf").is_admin)
 
 
 if __name__ == "__main__":

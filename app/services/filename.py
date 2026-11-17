@@ -34,12 +34,6 @@ REPORT_TYPE_KEYWORDS = [
     "雙週報", "週報", "月報", "速報", "策略", "評析", "報告", "snapshot", "memo",
 ]
 
-# 行政/活動檔關鍵字（檔名即可判定的非研究檔）
-ADMIN_KEYWORDS = [
-    "人事異動", "晉升", "組織架構", "行事曆", "連續假期", "部位限制",
-    "施工", "清洗", "webcast", "flyer", "公告", "通知",
-]
-
 RE_SOURCE_DATE = re.compile(r"-([A-Z]{2,8})(\d{8})")                        # -MS20240314
 
 # 檔名日期（依信心序）。年份明確者才在此決定；只有 MMDD / 6 位數歧義者回 None，
@@ -200,8 +194,9 @@ def _normalize_source(token: str) -> Optional[str]:
 
 
 def is_admin_doc(file_name: str) -> bool:
+    """檔名即可判定的行政／活動檔（非研究檔）：含 profile 的 `[filenames].admin_keywords` 其一（不分大小寫）。"""
     low = file_name.lower()
-    return any(kw.lower() in low for kw in ADMIN_KEYWORDS)
+    return any(kw.lower() in low for kw in get_profile().filenames.admin_keywords)
 
 
 def parse_filename(file_name: str) -> FilenameMeta:

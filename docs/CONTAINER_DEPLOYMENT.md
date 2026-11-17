@@ -330,7 +330,7 @@ groups:
 
 ## 示範環境
 
-在一台機器上把虛構的示範券商（`profiles/demo`）跑起來給客戶看：同一份映像、同一份 compose，多疊一個 override（`deploy/demo/docker-compose.demo.yml`），多兩個服務——假 LLM（`deploy/demo/fake_llm.py`）與 S3 測試伺服器（moto，Apache-2.0；刻意不用 MinIO：AGPL，與授權守門衝突）。預設完全離線、零費用。示範 profile 與廷豐的差異：機構與產品名（虛構）、自製 logo、青綠強調色、市場只開台股／美股／總體經濟、研報由 S3 bucket＋metadata 側檔送進來、背景補齊開著且上限小、個股代號另收美股 ticker（`[instruments]`）、發行機構用自己的虛構名單（`profiles/demo/sources.toml`）、每日簡報不等早上 9 時（`[brief].after_hour = 0`）。
+在一台機器上把虛構的示範券商（`profiles/demo`）跑起來給客戶看：同一份映像、同一份 compose，多疊一個 override（`deploy/demo/docker-compose.demo.yml`），多兩個服務——假 LLM（`deploy/demo/fake_llm.py`）與 S3 測試伺服器（moto，Apache-2.0；刻意不用 MinIO：AGPL，與授權守門衝突）。預設完全離線、零費用。示範 profile 與廷豐的差異：機構與產品名（虛構）、自製 logo、青綠強調色、市場只開台股／美股／總體經濟、研報由 S3 bucket＋metadata 側檔送進來、背景補齊開著且上限小、個股代號另收美股 ticker（`[instruments]`）、發行機構用自己的虛構名單（`profiles/demo/sources.toml`）、每日簡報不等早上 9 時（`[brief].after_hour = 0`）、檔名判定行政文件的關鍵字換成自己的清單（`[filenames]`）。
 
 | 元件 | 示範環境 | 換成真的 |
 |---|---|---|

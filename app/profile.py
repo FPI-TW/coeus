@@ -55,10 +55,10 @@ SQL 端由 `app/services/doc_types.py` 的 `doc_type_enabled_sql` 依這份設�
 `research` 全開、`non_research` 全關（等同改動前的 `is_research` true／false）。標註器會產生的類型
 （`tagging.TAGGER_DOC_TYPES`）必須全部宣告：漏宣告的類型所有功能都關，那類文件會靜默消失。
 
-## 個股代號、發行機構、簡報作息
+## 個股代號、發行機構、簡報作息、檔名規則
 
-這三項原本寫死在程式裡、對所有 profile 生效，其實是第一個導入機構的假設；改由 profile 宣告後，預設 profile
-宣告原值（零回歸）。
+這幾項是機構的假設，由 profile 宣告。section 缺席時的框架預設＝預設 profile 宣告的值，也就是框架化之前寫死在
+程式裡的值（零回歸）。
 
 - `[instruments]`：個股代號格式（`[instruments.code_formats.<標準市場代碼>]`，`kind` 是 `CODE_FORMAT_KINDS` 之一＋
   長度；資料形狀 `CodeFormat` 與框架預設 `DEFAULT_CODE_FORMATS` 在 `app/services/tagging.py`，因為 `tagging` 不
@@ -77,6 +77,9 @@ SQL 端由 `app/services/doc_types.py` 的 `doc_type_enabled_sql` 依這份設�
   內文指紋與顯示名稱；比對規則在 `app/services/filename.py`。section 缺席＝空名單：不從檔名或內文推斷發行機構
   （只靠側檔的 `source`），顯示名稱就是代碼本身。名單檔同樣嚴格驗證，錯誤訊息指向名單檔。
 - `[brief]`：每日簡報幾點後才產生、回看窗與回看上限（`scripts/generate_brief.py`；命令列參數仍可覆寫）。
+- `[filenames]`：`admin_keywords` 是檔名判定行政文件的關鍵字（不分大小寫的子字串，`filename.is_admin_doc`）：
+  命中的檔在標註前就略過、管理員上傳記成 `admin_file` 失敗。空清單＝不從檔名判定；section 缺席＝
+  `DEFAULT_ADMIN_FILENAME_KEYWORDS`。
 """
 
 from __future__ import annotations
@@ -339,6 +342,24 @@ class Brief:
     max_lookback_days: int = 7  # 任何情況下的回看上限（--max-lookback-days 可覆寫）
 
 
+# 檔名判定行政文件的關鍵字的框架預設（`[filenames]` 缺席時）：第一個導入機構的行政檔用語，預設 profile 也宣告同一份。
+DEFAULT_ADMIN_FILENAME_KEYWORDS: tuple[str, ...] = (
+    "人事異動", "晉升", "組織架構", "行事曆", "連續假期", "部位限制",
+    "施工", "清洗", "webcast", "flyer", "公告", "通知",
+)
+
+
+@dataclass(frozen=True)
+class Filenames:
+    """從檔名判讀的規則（`app/services/filename.py`）。
+
+    `admin_keywords`：檔名含其一（不分大小寫的子字串）就判為行政文件（`FilenameMeta.is_admin`）——入庫在標註
+    之前就略過，管理員上傳記成 `admin_file` 失敗。空清單＝不從檔名判定行政文件（照樣由標註判斷是不是研報）。
+    """
+
+    admin_keywords: tuple[str, ...] = DEFAULT_ADMIN_FILENAME_KEYWORDS
+
+
 @dataclass(frozen=True)
 class Profile:
     root: Path
@@ -355,6 +376,7 @@ class Profile:
     instruments: Instruments = field(default_factory=Instruments)
     sources: Sources = field(default_factory=Sources)
     brief: Brief = field(default_factory=Brief)
+    filenames: Filenames = field(default_factory=Filenames)
 
 
 # ── 驗證輔助 ─────────────────────────────────────────────────────────────
@@ -853,6 +875,25 @@ def _parse_brief(table: dict, ctx: _Ctx) -> Brief:
         max_lookback_days=_int_in(ctx, table, "max_lookback_days", defaults.max_lookback_days, 1, 60,
                                   "max_lookback_days"),
     )
+
+
+@_section("filenames")
+def _parse_filenames(table: dict, ctx: _Ctx) -> Filenames:
+    ctx.reject_unknown(table, {"admin_keywords"})
+    keywords = ctx.string_list(table, "admin_keywords")
+    if keywords is None:
+        return Filenames()
+    seen: set[str] = set()
+    for i, keyword in enumerate(keywords):
+        label = f"admin_keywords[{i}]"
+        # 比對是子字串：前後空白會讓關鍵字靜默失效，空字串會讓每個檔名都變成行政文件。
+        if (not keyword or keyword != keyword.strip() or len(keyword) > 40
+                or any(ord(c) < 0x20 or ord(c) == 0x7F for c in keyword)):
+            raise ctx.error(label, f"關鍵字必須是 40 字以內的非空字串、前後不留空白、不含控制字元：{keyword!r}")
+        if keyword.lower() in seen:
+            raise ctx.error(label, f"重複的關鍵字（不分大小寫）：{keyword!r}")
+        seen.add(keyword.lower())
+    return Filenames(admin_keywords=tuple(keywords))
 
 
 # ── 載入與快取 ───────────────────────────────────────────────────────────

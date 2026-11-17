@@ -482,6 +482,36 @@ class BriefSectionTests(_TmpCase):
         self.assertRejected(MINIMAL + "[brief]\ntimezone = \"UTC\"\n", "[brief].timezone", "未知的鍵")
 
 
+class FilenamesSectionTests(_TmpCase):
+    """[filenames]：檔名判定行政文件的關鍵字（app/services/filename.py 的 is_admin_doc）。"""
+
+    # 框架化之前寫死在 app/services/filename.py 的清單（golden）。
+    PRE_FRAMEWORK = ("人事異動", "晉升", "組織架構", "行事曆", "連續假期", "部位限制",
+                     "施工", "清洗", "webcast", "flyer", "公告", "通知")
+
+    def test_default_and_tingfong_are_the_pre_framework_list(self):
+        self.assertEqual(self.load(MINIMAL).filenames.admin_keywords, self.PRE_FRAMEWORK)
+        self.assertEqual(P.load_profile(REPO / "profiles" / "tingfong").filenames, P.Filenames())
+        self.assertEqual(P.Filenames().admin_keywords, self.PRE_FRAMEWORK)
+
+    def test_values(self):
+        prof = self.load(MINIMAL + '[filenames]\nadmin_keywords = ["Org Chart", "人事異動"]\n')
+        self.assertEqual(prof.filenames.admin_keywords, ("Org Chart", "人事異動"))
+        self.assertEqual(self.load(MINIMAL + "[filenames]\nadmin_keywords = []\n").filenames.admin_keywords, ())
+
+    def test_rejections(self):
+        def reject(value, *needles):
+            self.assertRejected(MINIMAL + f"[filenames]\nadmin_keywords = {value}\n", *needles)
+
+        reject('[""]', "[filenames].admin_keywords[0]", "非空")
+        reject('[" 公告"]', "[filenames].admin_keywords[0]", "空白")
+        reject('["公告", "flyer", "Flyer"]', "[filenames].admin_keywords[2]", "重複")
+        reject('["a\\tb"]', "[filenames].admin_keywords[0]", "控制字元")
+        reject('[1]', "[filenames].admin_keywords[0]", "字串")
+        reject('"公告"', "[filenames].admin_keywords", "陣列")
+        self.assertRejected(MINIMAL + '[filenames]\nreport_types = ["週報"]\n', "[filenames].report_types", "未知的鍵")
+
+
 class ContractTests(unittest.TestCase):
     def test_locales_match_output_language_and_frontend(self):
         """profile 的語系詞彙＝問答輸出語言（app/services/locale.py）＝前端字典的語系（frontend/src/i18n）。"""

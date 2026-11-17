@@ -117,3 +117,9 @@ catalog = "sources.toml"
 after_hour = 9
 default_lookback_hours = 24
 max_lookback_days = 7
+
+[filenames]
+# 檔名含其一（不分大小寫的子字串）就判為行政文件：入庫在標註前略過，管理員上傳記成 admin_file 失敗。
+# 這份是框架化之前寫死在程式裡的清單（也是 section 缺席時的框架預設）；部位限制是期交所的部位限制公告，
+# 施工、清洗是辦公大樓的公告。加字之前先確認不會命中研報的檔名，命中的研報會整份不入庫。
+admin_keywords = ["人事異動", "晉升", "組織架構", "行事曆", "連續假期", "部位限制", "施工", "清洗", "webcast", "flyer", "公告", "通知"]
