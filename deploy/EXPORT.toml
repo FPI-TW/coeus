@@ -127,6 +127,7 @@ include = [
   "tests/test_branding_api.py",
   "tests/test_brief.py",
   "tests/test_build_info.py",
+  "tests/test_business_time.py",
   "tests/test_chunk.py",
   "tests/test_chunk_tables.py",
   "tests/test_ci_db_contract.py",
@@ -208,6 +209,7 @@ include = [
   "tests/test_ingest_connectors.py",
   "tests/test_ingest_core.py",
   "tests/test_ingest_core_db.py",
+  "tests/test_instrument_prompts.py",
   "tests/test_json_logging.py",
   "tests/test_judge_http.py",
   "tests/test_judge_schema.py",
@@ -372,6 +374,7 @@ exclude = [
   "tests/test_web_health_probe.py",
   # 釘廷豐 profile 的值（prompt 全文、鎏金色票、發行機構名單、LLM 送出的身分與請求 golden）或廷豐評測資產的測試
   "tests/fixtures/llm_wire_golden.json",
+  "tests/fixtures/instrument_prompts_tingfong.json",
   "tests/fixtures/profile_prompts_tingfong.json",
   "tests/fixtures/tingfong_sources_golden.json",
   "tests/test_brand_accent.py",
@@ -412,6 +415,7 @@ files = [
   "tests/test_external_auth.py",
   "tests/test_healthz_llm.py",
   "tests/test_ingest_core.py",
+  "tests/test_instrument_prompts.py",
   "tests/test_llm_providers.py",
   "tests/test_metrics.py",
   "tests/test_ops_monitoring_db.py",
@@ -638,6 +642,38 @@ new = """    "worklist_batch*.json",          # data/ 底下的執行期分批�
     "report-mark-*.timer",
 """
 reason = "交付版的文件以 unit 名稱對照容器排程（docs/CONTAINER_DEPLOYMENT.md 的對照表等），unit 檔本身是不交付的主機層；只放行這個命名樣式"
+
+[[rewrite]]
+file = "tests/test_filename.py"
+old = """class DefaultStockCodeTests(_WithProfile):
+    \"\"\"預設 profile（＝section 缺席的框架預設）：正好 4 碼數字，行為與框架化之前的寫死正則逐字相同。\"\"\"
+
+    PROFILE = REPO_ROOT / "profiles" / "tingfong"
+"""
+new = """class DefaultStockCodeTests(_WithProfile):
+    \"\"\"預設 profile（＝section 缺席的框架預設）：正好 4 碼數字，行為與框架化之前的寫死正則逐字相同。\"\"\"
+
+    PROFILE = REPO_ROOT / "tests" / "fixtures" / "profile_framework"
+"""
+reason = "源頭的預設 profile 宣告的就是框架預設；交付版改用沒有 [instruments] 的測試 profile"
+
+[[rewrite]]
+file = "tests/test_filename.py"
+old = """預設 profile 宣告的是框架預設（框架化之前寫死的清單）。\"\"\"
+
+    PROFILE = REPO_ROOT / "profiles" / "tingfong"
+"""
+new = """預設 profile 宣告的是框架預設（框架化之前寫死的清單）。\"\"\"
+
+    PROFILE = REPO_ROOT / "tests" / "fixtures" / "profile_framework"
+"""
+reason = "同上（沒有 [filenames] 的測試 profile）"
+
+[[rewrite]]
+file = "tests/test_business_time.py"
+old = 'for name in ("tingfong", "demo"):'
+new = 'for name in ("demo",):'
+reason = "交付物只帶示範 profile"
 
 [verify]
 # 交付物裡不得出現的字樣（不分大小寫；檔名與內容都掃，二進位檔掃位元組）。

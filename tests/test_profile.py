@@ -499,9 +499,9 @@ class FilenamesSectionTests(_TmpCase):
     PRE_FRAMEWORK = ("人事異動", "晉升", "組織架構", "行事曆", "連續假期", "部位限制",
                      "施工", "清洗", "webcast", "flyer", "公告", "通知")
 
-    def test_default_and_tingfong_are_the_pre_framework_list(self):
+    def test_default_is_the_pre_framework_list(self):
         self.assertEqual(self.load(MINIMAL).filenames.admin_keywords, self.PRE_FRAMEWORK)
-        self.assertEqual(P.load_profile(REPO / "profiles" / "tingfong").filenames, P.Filenames())
+        self.assertEqual(P.load_profile(REPO / "profiles" / "tingfong").filenames, P.Filenames())  # export-omit
         self.assertEqual(P.Filenames().admin_keywords, self.PRE_FRAMEWORK)
 
     def test_values(self):

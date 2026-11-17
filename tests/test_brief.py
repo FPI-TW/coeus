@@ -567,8 +567,8 @@ class LabelTests(unittest.TestCase):
         self.assertEqual(rating_zh("weird"), "weird")
         self.assertEqual(market_zh("ZZ"), "ZZ")
 
-    def test_tingfong_uses_the_brief_vocabulary(self):
-        """廷豐沒有覆寫顯示名稱：簡報照用自己的詞表（刻意與介面的 MARKET_DISPLAY 不同，素材逐字不變）。"""
+    def test_default_profile_uses_the_brief_vocabulary(self):
+        """預設 profile 沒有覆寫顯示名稱：簡報照用自己的詞表（刻意與介面的 MARKET_DISPLAY 不同，素材逐字不變）。"""
         self.assertEqual({c: market_zh(c) for c in ("TW", "FX", "MACRO", "GLOBAL", "CRYPTO", "tw")},
                          {"TW": "台股", "FX": "匯市", "MACRO": "總體與債市", "GLOBAL": "全球與商品",
                           "CRYPTO": "加密資產", "tw": "台股"})

@@ -1,6 +1,6 @@
-"""標註與訊號擷取 prompt 的代號格式片段由 profile 的 `[instruments]` 推導；廷豐渲染出的全文逐字不變。
+"""標註與訊號擷取 prompt 的代號格式片段由 profile 的 `[instruments]` 推導；預設 profile 渲染出的全文逐字不變。
 
-`tests/fixtures/instrument_prompts_tingfong.json` 是代號格式改由 profile 推導**之前**的程式直接印出來的全文
+`GOLDEN`（`tests/fixtures/` 底下）是代號格式改由 profile 推導**之前**的程式直接印出來的全文
 （golden）。prompt 差一個字，標註與訊號的評測就不再可比，LLM 跳過名單（以 model 為鍵、不看 prompt）也會繼續擋著
 已經改過 prompt 的任務，所以這份 golden 只能在「刻意改 prompt」時重生。
 
@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-import json
+import json  # export-omit
 import os
 import sys
 import unittest
@@ -26,9 +26,9 @@ from app.services import brief, signal_extract, tagging  # noqa: E402
 from app.services.tagging import CodeFormat  # noqa: E402
 from scripts import _ingest_core, tag_all_cli  # noqa: E402
 
-GOLDEN = REPO_ROOT / "tests" / "fixtures" / "instrument_prompts_tingfong.json"
+GOLDEN = REPO_ROOT / "tests" / "fixtures" / "instrument_prompts_tingfong.json"  # export-omit
 DEMO = REPO_ROOT / "profiles" / "demo"
-TINGFONG = REPO_ROOT / "profiles" / "tingfong"
+TINGFONG = REPO_ROOT / "profiles" / "tingfong"  # export-omit
 
 
 def _ingest_prompt() -> str:
@@ -80,6 +80,7 @@ class _ProfileDir(unittest.TestCase):
         P.reset_profile_cache()
 
 
+# export-omit:begin
 class TingfongGoldenTests(_ProfileDir):
     PROFILE = TINGFONG
 
@@ -104,6 +105,7 @@ class TingfongGoldenTests(_ProfileDir):
             tagging.tag_instruction()  # type: ignore[call-arg]
         with self.assertRaises(TypeError):
             tagging.build_tagging_prompt("a.pdf", "a.pdf")  # type: ignore[call-arg]
+# export-omit:end
 
 
 class DemoProfileTests(_ProfileDir):
@@ -146,7 +148,7 @@ class DemoProfileTests(_ProfileDir):
         self.assertTrue(_ingest_prompt().startswith(self.tag))
 
     def test_only_the_format_fragments_change(self):
-        """格式片段以外的文字與廷豐逐字相同：profile 不能覆寫 prompt 文字。"""
+        """格式片段以外的文字與預設格式的版本（`TAG_INSTRUCTION`）逐字相同：profile 不能覆寫 prompt 文字。"""
         tf = tagging.TAG_INSTRUCTION.splitlines()
         demo = self.tag.splitlines()
         self.assertEqual(len(tf), len(demo))

@@ -97,7 +97,7 @@ catalog = "sources.toml"
 after_hour = 0
 
 [filenames]
-# 檔名判定行政文件的關鍵字（不分大小寫的子字串）。去掉廷豐專屬的部位限制（期交所公告）與施工、清洗（辦公大樓
+# 檔名判定行政文件的關鍵字（不分大小寫的子字串）。去掉框架預設裡的部位限制（期交所公告）與施工、清洗（辦公大樓
 # 公告），加上英文的組織圖與假期表。英文只收不會出現在研報標題的詞組：announcement、notice 這類單字會命中
 # 「earnings announcement」之類的研報檔名，命中的研報整份不入庫。
 admin_keywords = ["人事異動", "晉升", "組織架構", "行事曆", "連續假期", "公告", "通知", "webcast", "flyer", "org chart", "holiday schedule"]
