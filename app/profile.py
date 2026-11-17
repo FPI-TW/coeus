@@ -61,9 +61,16 @@ SQL 端由 `app/services/doc_types.py` 的 `doc_type_enabled_sql` 依這份設�
 宣告原值（零回歸）。
 
 - `[instruments]`：個股代號格式（`[instruments.code_formats.<標準市場代碼>]`，`kind` 是 `CODE_FORMAT_KINDS` 之一＋
-  長度）。標註結果的 `stock_targets` 只留符合其一的代號（`tagging.normalize_stock_targets`；`tagging` 不 import
-  本模組，規則由呼叫端傳入 `get_profile().instruments.normalize_code`）；總覽題從問句抓代號也依純數字格式的長度。
-  標註 prompt 不變（它只要求 4 碼代碼），section 缺席＝只收 4 碼數字。
+  長度；資料形狀 `CodeFormat` 與框架預設 `DEFAULT_CODE_FORMATS` 在 `app/services/tagging.py`，因為 `tagging` 不
+  import 本模組）。用在四處：
+  - 標註結果的 `stock_targets` 只留符合其一的代號（`tagging.normalize_stock_targets`，規則由呼叫端傳入
+    `get_profile().instruments.normalize_code`）。
+  - 標註 prompt 的代號說明：各市場說明裡的格式與範例、`stock_targets` 的格式要求、輸出範例的代號
+    （`tagging.tag_instruction(code_formats)`）；訊號擷取 prompt 的 `instrument_code` 說明
+    （`signal_extract.signal_instruction`）。只有這些片段由格式推導，其餘文字固定，profile 不能覆寫。
+  - 總覽題從問句抓代號，依純數字格式的長度。
+  section 缺席＝只收 4 碼數字；預設 profile 宣告同一份格式，prompt 與框架化之前逐字相同
+  （`tests/test_instrument_prompts.py` 對 golden）。
 - `[sources]`：`catalog` 引用 profile 目錄裡的名單檔（例如預設 profile 的 `sources.toml`），內容是檔名 token、
   內文指紋與顯示名稱；比對規則在 `app/services/filename.py`。section 缺席＝空名單：不從檔名或內文推斷發行機構
   （只靠側檔的 `source`），顯示名稱就是代碼本身。名單檔同樣嚴格驗證，錯誤訊息指向名單檔。
@@ -83,7 +90,15 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from app.services.tagging import DOC_TYPE_RESEARCH, MARKET_DISPLAY, MARKETS, TAGGER_DOC_TYPES
+from app.services.tagging import (
+    CODE_FORMAT_KINDS,
+    DEFAULT_CODE_FORMATS,
+    DOC_TYPE_RESEARCH,
+    MARKET_DISPLAY,
+    MARKETS,
+    TAGGER_DOC_TYPES,
+    CodeFormat,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROFILE_DIR_ENV = "PROFILE_DIR"
@@ -260,26 +275,9 @@ class Backfill:
     max_reports_per_round: int = 100  # 背景補齊每輪最多處理幾份研報
 
 
-# 個股代號格式的種類（框架固定的詞彙）：digits＝純數字（台股、港股、陸股），letters＝大寫英文字母（美股 ticker，
-# `share_class` 另收「.A」這種一個字母的股別後綴，例如 BRK.B）。只給種類與長度、不收任意 regex：同一份規則要能
-# 安全地在每份研報的標註結果上執行，也要講得清楚它收什麼。
-CODE_FORMAT_KINDS = ("digits", "letters")
+# 個股代號格式的資料形狀（`CodeFormat`）、種類詞彙（`CODE_FORMAT_KINDS`）與框架預設（`DEFAULT_CODE_FORMATS`）在
+# `app/services/tagging.py`：標註 prompt 的代號說明由它產生，而 tagging 不 import 本模組。這裡只做驗證與長度上限。
 _CODE_LENGTH_MAX = {"digits": 12, "letters": 10}
-
-
-@dataclass(frozen=True)
-class CodeFormat:
-    market: str  # 這個格式屬於哪個標準市場（說明與對帳用；驗證是所有格式的聯集，見 Instruments）
-    kind: str  # CODE_FORMAT_KINDS 之一
-    min_length: int
-    max_length: int
-    share_class: bool = False  # letters：另收一個字母的股別後綴（BRK.B）
-
-    def regex(self) -> str:
-        span = f"{{{self.min_length},{self.max_length}}}"
-        if self.kind == "digits":
-            return rf"\d{span}"
-        return rf"[A-Z]{span}" + (r"(?:\.[A-Z])?" if self.share_class else "")
 
 
 @dataclass(frozen=True)
@@ -287,10 +285,11 @@ class Instruments:
     """個股代號的格式（`[instruments.code_formats.<市場>]`）：標註結果的 `stock_targets` 只留符合其一的代號。
 
     驗證是所有格式的**聯集**、不看研報的市場：台股的報告常重點討論美股標的（反之亦然），按市場切會把它們丟掉。
-    section 缺席＝只收 4 碼數字（框架化之前的規則；標註 prompt 也只要求 4 碼代碼）。
+    標註 prompt 的代號說明、訊號擷取 prompt 的代碼欄位與檔名抓代號也依這份格式（見模組 docstring）。
+    section 缺席＝只收 4 碼數字（`tagging.DEFAULT_CODE_FORMATS`，框架化之前的規則）。
     """
 
-    code_formats: tuple[CodeFormat, ...] = (CodeFormat(market="TW", kind="digits", min_length=4, max_length=4),)
+    code_formats: tuple[CodeFormat, ...] = DEFAULT_CODE_FORMATS
 
     @cached_property
     def _pattern(self) -> re.Pattern[str]:

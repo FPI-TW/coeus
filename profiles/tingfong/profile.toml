@@ -101,7 +101,8 @@ available = ["zh-Hant", "en"]
 
 [instruments]
 # 個股代號格式：標註結果的 stock_targets 只留符合其一的代號（各市場格式的聯集，不看研報的市場）。
-# 廷豐只收 4 碼數字（框架化之前的規則，也是標註 prompt 要求的格式）；放寬會讓既有研報與新研報的標的口徑不一。
+# 標註與訊號擷取 prompt 的代號說明也由這裡產生（廷豐：「4 碼代碼如 1102、2317」，與框架化之前的 prompt 逐字相同，
+# tests/test_instrument_prompts.py 釘住）。廷豐只收 4 碼數字；放寬會讓既有研報與新研報的標的口徑不一。
 [instruments.code_formats.TW]
 kind = "digits"
 min_length = 4

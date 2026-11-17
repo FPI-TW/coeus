@@ -72,6 +72,7 @@ max_reports_per_round = 10
 [instruments]
 # 個股代號格式（標註結果 stock_targets 的驗證規則，各市場格式的聯集）：台股 4～6 碼數字（含 00878 這類 ETF），
 # 美股 1～5 個大寫字母（含 BRK.B 這類股別後綴；小寫會轉大寫）。廷豐只收 4 碼數字。
+# 標註 prompt 的各市場說明、stock_targets 的格式要求與訊號擷取的代碼欄位都依這份格式產生。
 [instruments.code_formats.TW]
 kind = "digits"
 min_length = 4
