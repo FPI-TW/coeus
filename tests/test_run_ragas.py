@@ -987,7 +987,9 @@ class JudgeProviderTests(unittest.TestCase):
         for model in sorted(HTTP_MODELS):
             with self.subTest(model=model):
                 self.assertEqual(rr.judge_provider(model), "llm_http")
-                self.assertEqual(rr.judge_lineage(model), rr.JUDGE_LINEAGE_LUNA)
+        # 內建名稱各一把尺：Luna 與 Sol 的系譜不同（eval_compare 的 META 鍵不同＝不可比）
+        self.assertEqual(rr.judge_lineage("gpt-6-luna"), rr.JUDGE_LINEAGE_LUNA)
+        self.assertEqual(rr.judge_lineage("gpt-6-sol"), "gpt-6-sol-2026-11")
         # 白名單外沒有 backend（判 unsupported）；系譜函式把它們歸到歷史系譜（讀舊結果檔用）
         self.assertEqual(rr.judge_provider("deepseek-flash"), "unsupported")
         self.assertEqual(rr.judge_lineage("deepseek-flash"), "deepseek-2026-09")

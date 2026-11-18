@@ -54,6 +54,11 @@ ENVS = {"azure_openai": AZURE_ENV, "anthropic": ANTHROPIC_ENV, "openai_compatibl
 MODEL = {"azure_openai": "gpt-6-luna", "anthropic": "claude-sonnet-5-5", "openai_compatible": "Qwen/Qwen3-72B"}
 
 
+def _truncation(meta: dict) -> dict:
+    """meta 的截斷欄位（另有 `ttft_ms`、`tokens`、`reasoning_effort`，由各自的測試釘）。"""
+    return {k: meta[k] for k in ("truncated", "truncated_reason") if k in meta}
+
+
 # ── 回應建構 ─────────────────────────────────────────────────────────────────
 def _sse(*events: dict | str, done: bool = True) -> bytes:
     lines: list[str] = []
@@ -354,17 +359,20 @@ class RequestShapeTests(_Case):
 
 # ── 推理強度與 temperature ───────────────────────────────────────────────────
 class ReasoningParamsTests(unittest.TestCase):
-    """`reasoning_params` 的對應規則逐點釘住（現行一律 none；其他強度是開推理那天要用的規則）。"""
+    """`reasoning_params` 的對應規則逐點釘住（預設 none；其他強度由各任務的 `*_REASONING` 旋鈕開）。"""
 
     EXPECTED = {
         # (provider, effort, max_tokens, temperature, supports_effort) → 送出的欄位
         ("openai", "none", 512, None, True): {"reasoning_effort": "none"},
         ("openai", "none", 512, 0, True): {"reasoning_effort": "none", "temperature": 0},
-        ("openai", "medium", 512, 0, True): {"reasoning_effort": "medium"},
+        # 強度不是 none：上限加推理預算（REASONING_TOKEN_BUDGET），temperature 不送
+        ("openai", "medium", 512, 0, True): {"reasoning_effort": "medium", "max_tokens": 512 + 16384},
+        ("opencode_go", "minimal", 16, None, True): {"reasoning_effort": "minimal", "max_tokens": 16 + 1024},
+        ("azure_openai", "high", 512, 0, True): {"reasoning_effort": "high", "max_tokens": 512 + 32768},
         ("azure_openai", "none", 512, 0, False): {"temperature": 0},
         ("azure_openai", "high", 512, 0, False): {"temperature": 0},
         ("openai_compatible", "none", 512, 0, False): {"temperature": 0},
-        ("openai_compatible", "low", 512, 0, True): {"reasoning_effort": "low"},
+        ("openai_compatible", "low", 512, 0, True): {"reasoning_effort": "low", "max_tokens": 512 + 4096},
         ("anthropic", "none", 512, 0, True): {"temperature": 0},
         ("anthropic", "none", 512, None, True): {},
         ("anthropic", "minimal", 4096, 0, True): {"thinking": {"type": "enabled", "budget_tokens": 1024}},
@@ -384,13 +392,18 @@ class ReasoningParamsTests(unittest.TestCase):
                                           supports_effort=supports)
                 self.assertEqual(got, expected)
 
-    def test_reasoning_is_off_by_constant_not_by_knob(self):
-        """推理關是刻意的常數（換量尺要發 PR），不是環境旋鈕。"""
-        self.assertEqual(lh.REASONING_EFFORT, "none")
-        self.assertIn(lh.REASONING_EFFORT, lh.REASONING_EFFORTS)
+    def test_reasoning_is_per_task_not_global(self):
+        """推理強度是每個任務的旋鈕（預設 none），沒有全域開關；judge 固定 none。"""
+        self.assertEqual(lh.REASONING_EFFORTS, ("none", "minimal", "low", "medium", "high"))
+        self.assertEqual(lh.JUDGE_REASONING_EFFORT, "none")
         self.assertEqual(set(lh.ANTHROPIC_THINKING_BUDGET), set(lh.REASONING_EFFORTS) - {"none"})
+        self.assertEqual(set(lh.REASONING_TOKEN_BUDGET), set(lh.REASONING_EFFORTS) - {"none"})
         for rel in ("app/services/llm_http.py", "app/services/llm_models.py", "app/config.py"):
             self.assertNotIn("LLM_REASONING_EFFORT", (REPO_ROOT / rel).read_text(encoding="utf-8"), rel)
+
+    def test_build_body_rejects_unknown_effort(self):
+        with self.assertRaises(ValueError):
+            lh.build_body("gpt-6-luna", "q", max_tokens=64, provider="openai", reasoning_effort="max")
 
     def test_build_body_for_explicit_provider(self):
         body = lh.build_body("claude-sonnet-5-5", "q", max_tokens=64, provider="anthropic", system="s",
@@ -472,7 +485,7 @@ class AnthropicStreamTests(_Case):
                 "q", model="claude-sonnet-5-5", meta=meta, max_tokens=64, task="ask_answer")]
         self.assertEqual(chunks, ["答"])
         self.assertEqual(waits, [2.0])
-        self.assertEqual(meta, {"truncated": True, "truncated_reason": llm.TRUNCATED_LENGTH})
+        self.assertEqual(_truncation(meta), {"truncated": True, "truncated_reason": llm.TRUNCATED_LENGTH})
 
     def test_batch_complete_chat_and_usage_log(self):
         self.reply(_anthropic_events(("text", "批次"), ("text", "結果")))
@@ -488,7 +501,8 @@ class AnthropicStreamTests(_Case):
         self.assertEqual(row["tokens"], {"hit": 4, "miss": 10, "completion": 7, "reasoning": 0})
         self.assertEqual(set(row), {"ts", "task", "file_hash", "report_id", "backend", "model_req", "model_resp",
                                     "prompt_sha256", "tokens", "finish_reason", "kind", "attempts", "ttft_ms",
-                                    "total_ms", "provider"})
+                                    "total_ms", "provider", "reasoning_effort"})
+        self.assertEqual(row["reasoning_effort"], "none")
 
 
 class AzureAndCompatStreamTests(_Case):
@@ -680,7 +694,7 @@ class OpenAiFamilyJsonTests(_Case):
 class WhitelistTests(_Case):
     def test_allowed_models_per_provider(self):
         cases = {
-            "openai": ({"LLM_PROVIDER": "openai", "ANTHROPIC_MODELS": "claude-x"}, {"gpt-6-luna"}),
+            "openai": ({"LLM_PROVIDER": "openai", "ANTHROPIC_MODELS": "claude-x"}, {"gpt-6-luna", "gpt-6-sol"}),
             "opencode_go": ({"LLM_PROVIDER": "opencode_go", "OPENAI_COMPATIBLE_MODELS": "qwen"}, {"gpt-6-luna"}),
             "azure_openai": (AZURE_ENV, {"gpt-6-luna", "gpt-4.1"}),
             "anthropic": (ANTHROPIC_ENV, {"claude-sonnet-5-5", "claude-haiku-4-5"}),
@@ -856,6 +870,23 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("LLM_DEFAULT_MODEL=llama-x", err)
 
+    def test_sol_is_rc2_on_go_and_ok_on_openai(self):
+        code, err = self.require(GO_ENV, {"takeaway": "gpt-6-sol"})
+        self.assertEqual(code, 2)
+        self.assertIn("只接受 gpt-6-luna", err)
+        code, err = self.require(OPENAI_ENV, {"takeaway": "gpt-6-sol"})
+        self.assertIsNone(code, err)
+
+    def test_reasoning_typo_is_rc2_naming_the_knob(self):
+        code, err = self.require({**OPENAI_ENV, "SUMMARY_REASONING": "hgih"}, {"summary": "gpt-6-luna"})
+        self.assertEqual(code, 2)
+        self.assertIn("SUMMARY_REASONING='hgih'", err)
+        # 只看本段的任務：別的任務的旋鈕拼錯不擋這一段
+        code, err = self.require({**OPENAI_ENV, "SUMMARY_REASONING": "hgih"}, {"tag": "gpt-6-luna"})
+        self.assertIsNone(code, err)
+        code, err = self.require({**OPENAI_ENV, "TAG_REASONING": "medium"}, {"tag": "gpt-6-luna"})
+        self.assertIsNone(code, err)
+
     def test_new_provider_values_are_valid(self):
         for prov in ("azure_openai", "anthropic", "openai_compatible"):
             with mock.patch.dict(os.environ, {"LLM_PROVIDER": prov}):
@@ -929,9 +960,242 @@ class HealthTests(_Case):
                                           "ASK_ANSWER_MODEL": "gpt-6-luna"}):
             self.assertEqual(await llm_health.report(), ("misconfigured", 503))
 
+    async def test_answer_reasoning_typo_is_misconfigured_without_probing(self):
+        self.handler = lambda r: self.fail("不該探端點")
+        with mock.patch.dict(os.environ, {**OPENAI_ENV, "ASK_ANSWER_REASONING": "hgih"}):
+            self.assertEqual(await llm_health.report(), ("misconfigured", 503))
+
     async def test_undeclared_answer_model_is_misconfigured(self):
         with mock.patch.dict(os.environ, {**ANTHROPIC_ENV, "ASK_ANSWER_MODEL": ""}):
             self.assertEqual(await llm_health.report(), ("misconfigured", 503))
+
+
+# ── 內建白名單依 provider、Sol 的量尺系譜、每任務推理強度 ─────────────────────────────
+OPENAI_ENV = {"LLM_PROVIDER": "openai", "OPENAI_API_KEY": KEY, "OPENAI_BASE_URL": ""}
+GO_ENV = {"LLM_PROVIDER": "opencode_go", "OPENCODE_GO_API_KEY": KEY, "OPENCODE_GO_BASE_URL": ""}
+
+
+class BuiltinWhitelistTests(_Case):
+    """`openai` 可送 Luna 與 Sol；`opencode_go` 沒有 Sol，設了 Sol 與其他白名單外名稱同一條路（不會改送 Luna）。"""
+
+    def test_whitelists_differ_only_by_sol(self):
+        self.assertEqual(lm.allowed_models(OPENAI_ENV), frozenset({"gpt-6-luna", "gpt-6-sol"}))
+        self.assertEqual(lm.allowed_models(GO_ENV), frozenset({"gpt-6-luna"}))
+        self.assertTrue(lm.is_http_model("gpt-6-sol", OPENAI_ENV))
+        self.assertFalse(lm.is_http_model("gpt-6-sol", GO_ENV))
+        # 預設表兩條路徑相同
+        env = {k: "" for k in lm.TASK_ENV.values()}
+        self.assertEqual(lm.resolve_all(lm.TASK_ENV, {**env, **OPENAI_ENV}),
+                         lm.resolve_all(lm.TASK_ENV, {**env, **GO_ENV}))
+
+    async def test_sol_on_go_is_config_online_and_rc2_in_batch(self):
+        self.env(GO_ENV)
+        self.handler = lambda r: self.fail("不該送出")
+        with self.assertRaises(llm.LLMUnavailableError) as cm:
+            async for _ in llm.stream_completion("q", model="gpt-6-sol", max_tokens=16, task="ask_answer"):
+                pass
+        self.assertEqual(cm.exception.kind, lh.CONFIG)
+        with self.assertRaises(_claude_cli.LlmEnvironmentError) as cm2:
+            _claude_cli.run_claude("p", "gpt-6-sol", 60, max_tokens=16, meta={"task": "takeaway"})
+        self.assertIn("gpt-6-luna", str(cm2.exception))
+        self.assertEqual(self.requests, [])
+
+    async def test_sol_on_openai_is_sent_with_the_same_shape_as_luna(self):
+        """Sol 的 golden：none 時的請求與 Luna 的錄音只差模型名（golden 檔本身不重錄）。"""
+        self.env({**OPENAI_ENV, "OPENAI_API_KEY": GOLDEN_KEYS["openai"][1]})
+        self.handler = lambda r: _ok_response("openai", r)
+        await asyncio.to_thread(lh.complete_chat, "gpt-6-sol", PROMPT, max_tokens=1024, timeout=60, task="summary",
+                                user_id="batch-summary")
+        expected = dict(GOLDEN["openai"]["batch"])
+        expected["body"] = expected["body"].replace('"model":"gpt-6-luna"', '"model":"gpt-6-sol"')
+        expected["headers"] = {k: v for k, v in expected["headers"].items() if k not in _HTTPX_OWNED}
+        self.assertEqual(_wire(self.requests[0]), expected)
+
+    def test_takeaway_on_sol_is_not_blocked_on_openai(self):
+        """摘錄的錨定白名單守的是預設模型（tests/test_extract_takeaways_sql.py）；設 Sol 不被擋。"""
+        env = {**OPENAI_ENV, "TAKEAWAY_MODEL": "gpt-6-sol"}
+        self.assertEqual(lm.resolve_model("takeaway", env=env), "gpt-6-sol")
+        self.assertTrue(lm.is_http_model("gpt-6-sol", env))
+        self.assertEqual(lm.default_model("takeaway"), "gpt-6-luna")
+
+    def test_sol_has_its_own_judge_lineage(self):
+        self.assertEqual(lm.JUDGE_LINEAGE_SOL, "gpt-6-sol-2026-11")
+        for env in (OPENAI_ENV, GO_ENV, AZURE_ENV):
+            with self.subTest(prov=env["LLM_PROVIDER"]):
+                self.assertEqual(lm.judge_lineage("gpt-6-sol", env), lm.JUDGE_LINEAGE_SOL)
+                self.assertEqual(lm.judge_lineage("gpt-6-luna", env), lm.JUDGE_LINEAGE_LUNA)
+        self.assertEqual(lm.CURRENT_JUDGE_LINEAGES, {lm.JUDGE_LINEAGE_LUNA, lm.JUDGE_LINEAGE_SOL})
+
+
+class ReasoningKnobTests(unittest.TestCase):
+    def test_knob_names_follow_the_model_knobs(self):
+        self.assertEqual(set(lm.TASK_REASONING_ENV), set(lm.TASK_ENV) - {"faithfulness", "eval_judge"})
+        for task, knob in lm.TASK_REASONING_ENV.items():
+            self.assertEqual(knob, lm.TASK_ENV[task].removesuffix("_MODEL") + "_REASONING")
+        for knob in ("ASK_ANSWER_REASONING", "TAG_REASONING", "SUMMARY_REASONING", "TITLE_REASONING",
+                     "TAKEAWAY_REASONING", "SIGNAL_REASONING", "BRIEF_REASONING", "ASK_INTENT_REASONING"):
+            self.assertIn(knob, lm.TASK_REASONING_ENV.values())
+        self.assertNotIn("FAITHFULNESS_REASONING", lm.TASK_REASONING_ENV.values())
+        self.assertNotIn("EVAL_JUDGE_REASONING", lm.TASK_REASONING_ENV.values())
+
+    def test_resolution(self):
+        env = {"ASK_ANSWER_REASONING": " low ", "SUMMARY_REASONING": "", "FAITHFULNESS_REASONING": "high",
+               "EVAL_JUDGE_REASONING": "high"}
+        self.assertEqual(lm.resolve_reasoning("ask_answer", env=env), "low")
+        self.assertEqual(lm.resolve_reasoning("ask_overview", env=env), "low", "總覽用主答的旋鈕")
+        self.assertEqual(lm.resolve_reasoning("eval_answer", env=env), "low")
+        self.assertEqual(lm.resolve_reasoning("summary", env=env), "none", "空字串＝none")
+        self.assertEqual(lm.resolve_reasoning("title", env={}), "none", "未設＝none")
+        self.assertEqual(lm.resolve_reasoning("faithfulness", env=env), "none", "judge 沒有旋鈕")
+        self.assertEqual(lm.resolve_reasoning("eval_judge", env=env), "none")
+        self.assertEqual(lm.resolve_reasoning("eval_draft", env=env), "none")
+        self.assertEqual(lm.resolve_reasoning("-", env=env), "none")
+        self.assertEqual(lm.resolve_reasoning(None, env=env), "none")
+        self.assertEqual(lm.resolve_reasoning("ask_answer", override="medium", env=env), "medium")
+        self.assertEqual(lm.resolve_reasoning("eval_answer", override="none", env=env), "none", "明確指定優先於旋鈕")
+
+    def test_typos_are_config_errors(self):
+        for value in ("hgih", "LOW", "max", "0", "off"):
+            with self.subTest(value=value):
+                with self.assertRaises(lm.ReasoningConfigError) as cm:
+                    lm.resolve_reasoning("tag", env={"TAG_REASONING": value})
+                self.assertIn("TAG_REASONING", str(cm.exception))
+        with self.assertRaises(lm.ReasoningConfigError):
+            lm.resolve_reasoning("eval_answer", override="hgih")
+        with self.assertRaises(lm.ReasoningConfigError):
+            lm.resolve_reasoning("faithfulness", override="low")
+        problems = lm.reasoning_problems(lm.ONLINE_TASKS, {"ASK_INTENT_REASONING": "hgih"})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ASK_INTENT_REASONING", problems[0])
+        self.assertEqual(lm.resolve_all_reasoning(("ask_intent", "ask_answer"), {"ASK_INTENT_REASONING": "x"}),
+                         {"ask_intent": "?", "ask_answer": "none"})
+
+    def test_diagnose_reports_reasoning_problems(self):
+        out = lm.diagnose({"ask_answer": "gpt-6-luna"}, has_key=True, prov="openai",
+                          reasoning=["ASK_ANSWER_REASONING='x' 不合法"])
+        self.assertEqual(len(out), 1)
+        self.assertIn("推理強度設定", out[0][1])
+
+    def test_every_call_site_label_maps_to_a_task(self):
+        """每個 `stream_completion(task=…)` 與批次任務常數都在 `CALL_TASK` 裡（漏列的標籤推理會靜默照 none）。"""
+        import ast
+
+        labels: set[str] = set()
+        for root in ("app", "web", "scripts", "eval"):
+            for path in (REPO_ROOT / root).rglob("*.py"):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+                    if name != "stream_completion":
+                        continue
+                    for kw in node.keywords:
+                        if kw.arg != "task":
+                            continue
+                        if isinstance(kw.value, ast.Constant):
+                            labels.add(kw.value.value)
+                        elif isinstance(kw.value, ast.IfExp):
+                            labels |= {v.value for v in (kw.value.body, kw.value.orelse) if isinstance(v, ast.Constant)}
+        self.assertLessEqual({"ask_answer", "ask_overview", "ask_intent", "eval_answer"}, labels, "掃描有找到呼叫點")
+        from app.services import llm_failures
+        from scripts import draft_eval_questions
+
+        labels |= set(llm_failures.TASKS) | {lm.TASK_BRIEF, draft_eval_questions.TASK_EVAL_DRAFT}
+        self.assertEqual(labels - set(lm.CALL_TASK), set())
+
+
+class ReasoningRequestTests(_Case):
+    """各強度實際送出的欄位與上限；none 時與 golden 逐字相同（GoldenWireTests）。"""
+
+    async def _answer(self, **kw) -> dict:
+        meta: dict = {}
+        self.handler = lambda r: _ok_response("openai", r)
+        async for _ in llm.stream_completion("q", model="gpt-6-sol", max_tokens=512, task="ask_answer", meta=meta,
+                                             **kw):
+            pass
+        return meta
+
+    async def test_online_effort_and_budget(self):
+        for effort, budget in lh.REASONING_TOKEN_BUDGET.items():
+            with self.subTest(effort=effort), mock.patch.dict(os.environ, {**OPENAI_ENV,
+                                                                             "ASK_ANSWER_REASONING": effort}):
+                self.requests.clear()
+                meta = await self._answer()
+                body = self.body()
+                self.assertEqual(body["reasoning_effort"], effort)
+                self.assertEqual(body["max_completion_tokens"], 512 + budget)
+                self.assertNotIn("temperature", body)
+                self.assertEqual(meta["reasoning_effort"], effort)
+                self.assertEqual(meta["tokens"], {"prompt": 3, "completion": 1, "reasoning": 0})
+                self.assertIsInstance(meta["ttft_ms"], int)
+
+    async def test_none_keeps_the_caller_cap(self):
+        self.env({**OPENAI_ENV, "ASK_ANSWER_REASONING": ""})
+        await self._answer()
+        self.assertEqual((self.body()["reasoning_effort"], self.body()["max_completion_tokens"]), ("none", 512))
+
+    async def test_explicit_reasoning_beats_the_knob(self):
+        self.env({**OPENAI_ENV, "ASK_ANSWER_REASONING": "high"})
+        await self._answer(reasoning="low")
+        self.assertEqual(self.body()["reasoning_effort"], "low")
+        self.requests.clear()
+        await self._answer(reasoning="none")
+        self.assertEqual(self.body()["reasoning_effort"], "none")
+
+    async def test_route_task_gets_a_budget_on_top_of_16(self):
+        """路由（ROUTE_MAX_TOKENS=16）：不加預算的話 16 token 全被推理吃掉、content 是空的。"""
+        from app.services import scope_router
+
+        self.env({**OPENAI_ENV, "ASK_INTENT_REASONING": "low"})
+        self.handler = lambda r: _ok_response("openai", r)
+        async for _ in llm.stream_completion("q", model="gpt-6-luna", max_tokens=scope_router.ROUTE_MAX_TOKENS,
+                                             task="ask_intent"):
+            pass
+        self.assertEqual(self.body()["max_completion_tokens"], 16 + lh.REASONING_TOKEN_BUDGET["low"])
+
+    async def test_online_typo_is_config_without_sending(self):
+        self.env({**OPENAI_ENV, "ASK_ANSWER_REASONING": "hgih"})
+        self.handler = lambda r: self.fail("不該送出")
+        with self.assertRaises(llm.LLMUnavailableError) as cm:
+            await self._answer()
+        self.assertEqual(cm.exception.kind, lh.CONFIG)
+        self.assertIn("ASK_ANSWER_REASONING", str(cm.exception))
+        with self.assertRaises(llm.LLMUnavailableError):
+            await self._answer(reasoning="hgih")
+        self.assertEqual(self.requests, [])
+
+    def test_batch_effort_budget_and_usage_row(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {
+            **OPENAI_ENV, "LLM_USAGE_LOG": str(Path(d) / "usage.jsonl"), "SUMMARY_REASONING": "medium",
+        }):
+            self.handler = lambda r: _ok_response("openai", r)
+            res = _claude_cli.run_claude("p", "gpt-6-sol", 60, max_tokens=1024, meta={"task": "summary"})
+            row = json.loads((Path(d) / "usage.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual(res.text, "ok")
+        body = self.body()
+        self.assertEqual((body["model"], body["reasoning_effort"]), ("gpt-6-sol", "medium"))
+        self.assertEqual(body["max_completion_tokens"], 1024 + lh.REASONING_TOKEN_BUDGET["medium"])
+        self.assertEqual(row["reasoning_effort"], "medium")
+
+    def test_batch_typo_aborts_without_sending(self):
+        self.env({**OPENAI_ENV, "BRIEF_REASONING": "hgih"})
+        self.handler = lambda r: self.fail("不該送出")
+        with self.assertRaises(_claude_cli.LlmEnvironmentError) as cm:
+            _claude_cli.run_claude("p", "gpt-6-luna", 60, max_tokens=16, meta={"task": "brief"})
+        self.assertIn("BRIEF_REASONING", str(cm.exception))
+        self.assertEqual(self.requests, [])
+
+    async def test_judge_is_always_none_and_t0(self):
+        """judge 沒有旋鈕：環境裡每個推理旋鈕（含不存在的 judge 旋鈕）都設了，judge 仍是 none／t=0、上限不加預算。"""
+        knobs = {k: "high" for k in lm.TASK_REASONING_ENV.values()}
+        self.env({**OPENAI_ENV, **knobs, "FAITHFULNESS_REASONING": "high", "EVAL_JUDGE_REASONING": "high"})
+        self.handler = lambda r: _ok_response("openai", r)
+        res = await self.json_call("gpt-6-sol")
+        self.assertIsNone(res.kind)
+        body = self.body()
+        self.assertEqual((body["reasoning_effort"], body["temperature"]), ("none", 0))
+        self.assertEqual(body["max_completion_tokens"], 2048)
 
 
 if __name__ == "__main__":

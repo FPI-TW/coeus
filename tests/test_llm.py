@@ -62,6 +62,11 @@ _FAKE_KEY = "fixed-test-secret-openai0"
 _ENV = {"OPENAI_API_KEY": _FAKE_KEY, "OPENAI_BASE_URL": "https://api.example.test"}
 
 
+def _truncation(meta: dict) -> dict:
+    """meta 的截斷欄位（另有 `ttft_ms`、`tokens`、`reasoning_effort`，由各自的測試釘）。"""
+    return {k: meta[k] for k in ("truncated", "truncated_reason") if k in meta}
+
+
 def _sse(*events, done: bool = True) -> bytes:
     out = []
     for ev in events:
@@ -375,7 +380,7 @@ class HttpRetryTests(_HttpCase):
         chunks = await self.collect(retries=2, meta=meta)
         self.assertEqual(chunks, ["開頭"])
         self.assertEqual(len(self.requests), 1)
-        self.assertEqual(meta, {"truncated": True, "truncated_reason": llm.TRUNCATED_NETWORK})
+        self.assertEqual(_truncation(meta), {"truncated": True, "truncated_reason": llm.TRUNCATED_NETWORK})
 
     async def test_empty_response_reason(self):
         self.install(lambda req: httpx.Response(200, content=_sse(_chunk("", finish="stop"))))
@@ -436,7 +441,7 @@ class HttpPartialTests(_HttpCase):
         self.install(lambda req: httpx.Response(200, content=_sse(_chunk("很長的"), _chunk("", finish="length"))))
         meta: dict = {}
         self.assertEqual(await self.collect(meta=meta), ["很長的"])
-        self.assertEqual(meta, {"truncated": True, "truncated_reason": llm.TRUNCATED_LENGTH})
+        self.assertEqual(_truncation(meta), {"truncated": True, "truncated_reason": llm.TRUNCATED_LENGTH})
 
     async def test_read_timeout_after_text_marks_truncated(self):
         class Stream(httpx.AsyncByteStream):
@@ -447,7 +452,7 @@ class HttpPartialTests(_HttpCase):
         self.install(lambda req: httpx.Response(200, stream=Stream()))
         meta: dict = {}
         self.assertEqual(await self.collect(meta=meta), ["前半"])
-        self.assertEqual(meta, {"truncated": True, "truncated_reason": llm.TRUNCATED_READ_TIMEOUT})
+        self.assertEqual(_truncation(meta), {"truncated": True, "truncated_reason": llm.TRUNCATED_READ_TIMEOUT})
         self.assertEqual(len(self.requests), 1)
 
 
@@ -541,7 +546,7 @@ class HttpTotalTimeoutTests(_HttpCase):
         self.assertLess(time.monotonic() - t0, 2.0, "總時限要在新 Task 驅動下照樣生效")
         self.assertTrue(items and items[0] == "段0")
         self.assertLess(len(items), 60)
-        self.assertEqual(meta, {"truncated": True, "truncated_reason": llm.TRUNCATED_TOTAL_TIMEOUT})
+        self.assertEqual(_truncation(meta), {"truncated": True, "truncated_reason": llm.TRUNCATED_TOTAL_TIMEOUT})
         self.assertEqual(len(self.requests), 1, "已吐字不重試")
         self.assertTrue(closed.is_set(), "到期要關掉 httpx 回應")
 

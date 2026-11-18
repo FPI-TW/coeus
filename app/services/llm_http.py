@@ -11,9 +11,11 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
 設計要點（每一條都有對應的事故或官方文件，改之前先讀）：
 
 - **推理預設是開的**（`gpt-6-luna` 預設 `reasoning_effort=medium`）。不關的話 TTFT 變長、token 成本上升，
-  上限被推理吃光時 content 會是空的（推理 token 也算進 `max_completion_tokens`）。每個請求都送
-  `reasoning_effort=none`；`temperature` 只有在 `none` 時才可以送（官方 latest-model 指南），judge 靠它固定 t=0。
-  不送 `thinking` 這類非 OpenAI 參數：Go 對這顆模型回 400（2026-11-02 探測）。
+  上限被推理吃光時 content 會是空的（推理 token 也算進 `max_completion_tokens`）。所以每個請求都**明確**送
+  `reasoning_effort`：強度由分派層依任務解析後傳進來（`reasoning_effort=`，`llm_models.resolve_reasoning`；
+  未設＝`none`），本模組不讀旋鈕。judge（`complete_json`）固定 `none`。`temperature` 只有在 `none` 時才可以送
+  （官方 latest-model 指南），judge 靠它固定 t=0。強度不是 `none` 時上限另加推理預算（`REASONING_TOKEN_BUDGET`、
+  `reasoning_params`）。不送 `thinking` 這類非 OpenAI 參數：Go 對這顆模型回 400（2026-11-02 探測）。
 - **`max_tokens` 由呼叫端逐點給**，沒有預設值：多標的的訊號擷取會被截斷，而截斷在舊架構裡會被誤判成
   「JSON 解析失敗」。送出時的欄位是 `max_completion_tokens`（`max_tokens` 已被官方標為 deprecated）。
 - **錯誤依 HTTP 狀態碼分類**（`classify_status`），但有三類同一個狀態碼底下語意不同，要看本體：內容政策
@@ -61,7 +63,8 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
 ## 各 provider 的對應規則（tests/test_llm_providers.py 逐點釘住）
 
 - **openai／opencode_go**（基準）：`{base}/chat/completions`、`Authorization: Bearer`；body 送模型名、
-  `max_completion_tokens`、`reasoning_effort=none`；temperature（judge 的 0）只在推理關時送；JSON 模式
+  `max_completion_tokens`（強度不是 none 時含推理預算）、`reasoning_effort`；temperature（judge 的 0）只在推理關時送；
+  JSON 模式
   `response_format=json_object`；串流讀 `choices[0].delta` 直到 `[DONE]`；usage 由 `prompt_tokens_details.cached_tokens`
   補 hit／miss（`_normalize_usage`）；Go 的額度型 429 歸 QUOTA。
 - **azure_openai**：`{endpoint}/openai/deployments/{deployment}/chat/completions?api-version=…`（deployment 由
@@ -120,6 +123,8 @@ from app.services.llm_models import (  # noqa: F401
     PROVIDER_OPENAI,
     PROVIDER_OPENAI_COMPATIBLE,
     PROVIDER_OPENCODE_GO,
+    REASONING_EFFORTS,
+    REASONING_NONE,
     config_problems,
     declared_deployments,
     endpoint_base,
@@ -226,11 +231,15 @@ def _session_id(value: str | None) -> str | None:
 
 
 # ── 推理強度與各 provider 的請求欄位 ────────────────────────────────────────────
-# **刻意固定為 none**（模組 docstring「推理預設是開的」）：開推理會改變 TTFT、成本、上限語意與 judge 的 t=0，
-# 等於換量尺。所以這裡不是旋鈕——要開就改這個常數、發 PR、重新評測。各 provider 對「非 none」的對應規則
-# 仍完整定義在 `reasoning_params`（tests/test_llm_providers.py 逐點釘住），開的那天不必再設計一次。
-REASONING_EFFORT = "none"
-REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high")
+# 強度由分派層依任務解析（`llm_models.resolve_reasoning`；`REASONING_EFFORTS` 從那裡重新匯出）後以 `reasoning_effort=`
+# 傳進來，預設 none。開推理會改變 TTFT、成本、上限語意與 judge 的 t=0，所以 judge 固定 none
+# （`JUDGE_REASONING_EFFORT`）。
+JUDGE_REASONING_EFFORT = REASONING_NONE
+# OpenAI 族的推理預算（token）：強度不是 none 時加在呼叫端給的上限上。推理 token 算在 `max_completion_tokens` 裡，
+# 不加的話小上限的任務（路由 16、標題 512）會被推理吃光、content 是空的。呼叫端給的上限因此仍是「可見輸出」的上限
+# 語意（推理用得少時可見輸出可以超過它，OpenAI 不分開算）。預算只是上限，不用完不計費。
+# 數值參考 `ANTHROPIC_THINKING_BUDGET` 與官方「推理模型至少預留 25k」的建議；**待使用者確認**（PR 描述逐任務列表）。
+REASONING_TOKEN_BUDGET = {"minimal": 1024, "low": 4096, "medium": 16384, "high": 32768}
 # Anthropic extended thinking 的 budget（token）。官方下限 1024，且必須小於 `max_tokens`（budget 算在 max_tokens 內，
 # 與 OpenAI 的推理 token 算進 `max_completion_tokens` 同一個語意）。
 ANTHROPIC_THINKING_BUDGET = {"minimal": 1024, "low": 2048, "medium": 8192, "high": 16384}
@@ -244,6 +253,8 @@ def reasoning_params(
 
     - OpenAI 族（`openai`、`opencode_go`、`azure_openai`、`openai_compatible`）：`supports_effort` 時送
       `reasoning_effort`；不支援（自架端點預設、Azure 關掉能力旋鈕）就**不送**，交給伺服器預設（降級，不是 400）。
+      送出的強度不是 none 時另回 `max_tokens`＝呼叫端上限＋`REASONING_TOKEN_BUDGET[強度]`（body 的上限欄位用它）；
+      none 或沒送 `reasoning_effort` 時不回這個鍵，上限照呼叫端給的。
       `temperature` 只有在 `reasoning_effort=none` 或根本沒送 `reasoning_effort` 時才送：官方規定推理開著時不收
       temperature（judge 的 t=0 因此只在推理關時成立）。
     - Anthropic：`none` 不送 `thinking`（API 預設即關）；其他強度送 `thinking={"type":"enabled","budget_tokens":…}`，
@@ -262,7 +273,9 @@ def reasoning_params(
         return out
     if supports_effort:
         out["reasoning_effort"] = effort
-    if temperature is not None and out.get("reasoning_effort", "none") == "none":
+        if effort != REASONING_NONE:
+            out["max_tokens"] = int(max_tokens) + REASONING_TOKEN_BUDGET[effort]
+    if temperature is not None and out.get("reasoning_effort", REASONING_NONE) == REASONING_NONE:
         out["temperature"] = temperature
     return out
 
@@ -270,6 +283,7 @@ def reasoning_params(
 def _openai_family_body(
     prov: str, model: str, messages: list, *, max_tokens: int, stream: bool,
     temperature: float | None, response_format: dict | None, supports_effort: bool,
+    reasoning_effort: str = REASONING_NONE,
 ) -> dict:
     """Chat Completions 的 body。`openai`／`opencode_go` 的鍵與順序與改寫前逐字相同（tests/test_llm_providers.py 以
     golden 釘住），所以這裡逐鍵依序寫，不用 dict 合併。
@@ -281,12 +295,14 @@ def _openai_family_body(
     body: dict = {}
     if prov != PROVIDER_AZURE_OPENAI:
         body["model"] = model
-    body["messages"] = messages
-    body["max_tokens" if prov == PROVIDER_OPENAI_COMPATIBLE else "max_completion_tokens"] = int(max_tokens)
-    body["stream"] = stream
     extra = reasoning_params(
-        prov, REASONING_EFFORT, max_tokens=max_tokens, temperature=temperature, supports_effort=supports_effort,
+        prov, reasoning_effort, max_tokens=max_tokens, temperature=temperature, supports_effort=supports_effort,
     )
+    body["messages"] = messages
+    body["max_tokens" if prov == PROVIDER_OPENAI_COMPATIBLE else "max_completion_tokens"] = int(
+        extra.get("max_tokens", max_tokens)
+    )
+    body["stream"] = stream
     if "reasoning_effort" in extra:
         body["reasoning_effort"] = extra["reasoning_effort"]
     if stream:
@@ -300,6 +316,7 @@ def _openai_family_body(
 
 def _anthropic_body(
     model: str, prompt: str, system: str | None, *, max_tokens: int, stream: bool, temperature: float | None,
+    reasoning_effort: str = REASONING_NONE,
 ) -> dict:
     """Messages API 的 body。system 是頂層欄位、不是一則訊息；沒有 `response_format`（JSON 模式見 `complete_json`）。"""
     body: dict = {"model": model, "max_tokens": int(max_tokens)}
@@ -308,7 +325,7 @@ def _anthropic_body(
     body["messages"] = [{"role": "user", "content": sanitize(prompt)}]
     body["stream"] = stream
     body.update(reasoning_params(
-        PROVIDER_ANTHROPIC, REASONING_EFFORT, max_tokens=max_tokens, temperature=temperature,
+        PROVIDER_ANTHROPIC, reasoning_effort, max_tokens=max_tokens, temperature=temperature,
     ))
     return body
 
@@ -323,17 +340,22 @@ def build_body(
     temperature: float | None = None,
     response_format: dict | None = None,
     provider: str | None = None,
+    reasoning_effort: str = REASONING_NONE,
 ) -> dict:
-    """組請求 body（`provider` 省略＝目前的 `LLM_PROVIDER`）。推理一律關，見模組 docstring 與 `reasoning_params`。
+    """組請求 body（`provider` 省略＝目前的 `LLM_PROVIDER`）。推理強度見模組 docstring 與 `reasoning_params`；
+    不在 `REASONING_EFFORTS` 的值拋 ValueError（呼叫端歸 config）。
 
     `temperature`／`response_format` 預設不送（沿用伺服器預設）；judge（`complete_json`）送
     `temperature=0` 與 `{"type": "json_object"}`。Anthropic 沒有 `response_format`，忽略它（`complete_json` 改以
     提示約束＋嚴格解析，見其 docstring）。
     """
+    if reasoning_effort not in REASONING_EFFORTS:
+        raise ValueError(f"reasoning_effort={reasoning_effort!r} 不合法（只接受 {'|'.join(REASONING_EFFORTS)}）")
     prov = provider or _provider()
     if prov == PROVIDER_ANTHROPIC:
         return _anthropic_body(
             model, prompt, system, max_tokens=max_tokens, stream=stream, temperature=temperature,
+            reasoning_effort=reasoning_effort,
         )
     messages = []
     if system:
@@ -342,7 +364,7 @@ def build_body(
     supports = supports_reasoning_effort({**os.environ, "LLM_PROVIDER": prov})
     return _openai_family_body(
         prov, model, messages, max_tokens=max_tokens, stream=stream, temperature=temperature,
-        response_format=response_format, supports_effort=supports,
+        response_format=response_format, supports_effort=supports, reasoning_effort=reasoning_effort,
     )
 
 
@@ -803,7 +825,9 @@ def remove_observer(fn: Callable[[dict], None]) -> None:
         _OBSERVERS.remove(fn)
 
 
-def call_metadata(task: str, model: str, out: ChatOutcome, attempts: int = 1) -> dict:
+def call_metadata(
+    task: str, model: str, out: ChatOutcome, attempts: int = 1, effort: str = REASONING_NONE,
+) -> dict:
     """交給 observer 的 metadata：只有 `_log_call` 那行 log 本來就有的欄位。**沒有 prompt、回答、header、金鑰**。
 
     tokens 的鍵與 `scripts/_claude_cli.record_usage` 寫進 jsonl 的 `tokens` 同名（hit／miss／completion／reasoning）；
@@ -821,15 +845,15 @@ def call_metadata(task: str, model: str, out: ChatOutcome, attempts: int = 1) ->
     return {
         "task": task, "model": model, "model_resp": out.model_resp, "kind": out.kind,
         "finish_reason": out.finish_reason, "attempts": attempts, "ttft_ms": out.ttft_ms,
-        "total_ms": out.total_ms, "tokens": tokens, "provider": _provider(),
+        "total_ms": out.total_ms, "tokens": tokens, "provider": _provider(), "reasoning_effort": effort,
     }
 
 
-def _notify_observers(task: str, model: str, out: ChatOutcome, attempts: int) -> None:
+def _notify_observers(task: str, model: str, out: ChatOutcome, attempts: int, effort: str) -> None:
     global _observer_warned
     if not _OBSERVERS:
         return
-    meta = call_metadata(task, model, out, attempts)
+    meta = call_metadata(task, model, out, attempts, effort)
     for fn in list(_OBSERVERS):
         try:
             fn(dict(meta))
@@ -839,7 +863,9 @@ def _notify_observers(task: str, model: str, out: ChatOutcome, attempts: int) ->
                 logger.warning("llm_http observer 失敗（之後同類失敗不再記錄）", exc_info=True)
 
 
-def _log_call(task: str, model: str, out: ChatOutcome, attempts: int = 1) -> None:
+def _log_call(
+    task: str, model: str, out: ChatOutcome, attempts: int = 1, effort: str = REASONING_NONE,
+) -> None:
     """每次呼叫一行結構化 log（不含 prompt、不含 header）；402 另記下時刻（見 `_quota_seen_at`）。
 
     放在這裡是因為它是線上（`astream_chat`）與批次（`complete_chat`）共同的收尾點，每次呼叫恰好一次。
@@ -854,13 +880,13 @@ def _log_call(task: str, model: str, out: ChatOutcome, attempts: int = 1) -> Non
     details = usage.get("completion_tokens_details") or {}
     logger.info(
         "llm_call task=%s model=%s model_resp=%s backend=http provider=%s kind=%s finish=%s attempts=%d "
-        "ttft_ms=%s total_ms=%d hit=%s miss=%s out=%s reasoning=%s fp=%s",
+        "ttft_ms=%s total_ms=%d hit=%s miss=%s out=%s reasoning=%s fp=%s effort=%s",
         task, model, out.model_resp, _provider(), out.kind or "ok", out.finish_reason, attempts,
         out.ttft_ms, out.total_ms, usage.get("prompt_cache_hit_tokens"),
         usage.get("prompt_cache_miss_tokens"), usage.get("completion_tokens"),
-        details.get("reasoning_tokens"), out.system_fingerprint,
+        details.get("reasoning_tokens"), out.system_fingerprint, effort,
     )
-    _notify_observers(task, model, out, attempts)
+    _notify_observers(task, model, out, attempts, effort)
 
 
 
@@ -1098,8 +1124,8 @@ def _transport_detail(exc: BaseException) -> str:
 def _silent_detail(exc: BaseException, reasoning_chars: int = 0) -> str:
     """首字前 read 逾時的 detail：說出是伺服器沉默，不是我們的首字期限。
 
-    已收到 reasoning 才沉默時換一種說法：推理應已關閉（見模組 docstring），這時伺服器其實
-    回應過，「未送出任何位元組」會把人帶去查連線。分類不變（TIMEOUT、不重試）。
+    已收到 reasoning 才沉默時換一種說法：這時伺服器其實回應過（推理關著時不該有 reasoning，開著時是推理拖過了
+    read 逾時），「未送出任何位元組」會把人帶去查連線。分類不變（TIMEOUT、不重試）。
     """
     if reasoning_chars > 0:
         msg = f"reasoning（{reasoning_chars} 字）後伺服器沉默 {_READ_TIMEOUT:g}s、尚未輸出內容"
@@ -1127,6 +1153,7 @@ async def astream_chat(
     task: str = "-",
     user_id: str | None = None,
     total_timeout: float | None = None,
+    reasoning_effort: str = REASONING_NONE,
 ) -> AsyncIterator[str | ChatOutcome]:
     """串流呼叫：逐段 yield content 文字，最後 yield 一個 `ChatOutcome`（恰好一次）。
 
@@ -1146,7 +1173,7 @@ async def astream_chat(
         first_token_timeout = total_timeout
     pre = _preflight(t0, model)
     if isinstance(pre, ChatOutcome):
-        _log_call(task, model, pre)
+        _log_call(task, model, pre, effort=reasoning_effort)
         yield pre
         return
     key, url = pre
@@ -1160,7 +1187,7 @@ async def astream_chat(
     try:
         try:
             body = build_body(
-                model, prompt, max_tokens=max_tokens, system=system,
+                model, prompt, max_tokens=max_tokens, system=system, reasoning_effort=reasoning_effort,
             )
             client = _async_client()
             request = client.build_request(
@@ -1252,7 +1279,7 @@ async def astream_chat(
 
     if out is None:
         out = _outcome(acc, got_text, t0, ttft_ms)
-    _log_call(task, model, out)
+    _log_call(task, model, out, effort=reasoning_effort)
     yield out
 
 
@@ -1356,7 +1383,7 @@ def _deadline_after_text(acc: _Acc, t0: float, ttft_ms: int | None, chars: int) 
 
 def _complete_once(
     model: str, prompt: str, *, max_tokens: int, system: str | None,
-    user_id: str | None, deadline: float,
+    user_id: str | None, deadline: float, reasoning_effort: str = REASONING_NONE,
 ) -> tuple[ChatOutcome, str]:
     t0 = time.monotonic()
     pre = _preflight(t0, model)
@@ -1369,7 +1396,7 @@ def _complete_once(
 
     try:
         body = build_body(
-            model, prompt, max_tokens=max_tokens, system=system,
+            model, prompt, max_tokens=max_tokens, system=system, reasoning_effort=reasoning_effort,
         )
         client = _sync_client()
         # 各項逾時都不超過剩餘期限。逐 chunk 的期限檢查只在收到位元組時才執行，所以伺服器中途
@@ -1464,6 +1491,7 @@ def complete_chat(
     user_id: str | None = None,
     retries: int = 2,
     sleep=time.sleep,
+    reasoning_effort: str = REASONING_NONE,
 ) -> ChatResult:
     """同步呼叫（批次用）。回完整文字，或 `API[<kind>]` 開頭、說得出原因的錯誤。
 
@@ -1486,7 +1514,7 @@ def complete_chat(
         attempts += 1
         out, text = _complete_once(
             model, prompt, max_tokens=max_tokens, system=system,
-            user_id=user_id, deadline=deadline,
+            user_id=user_id, deadline=deadline, reasoning_effort=reasoning_effort,
         )
         if out.kind is None:
             break
@@ -1499,7 +1527,7 @@ def complete_chat(
         if time.monotonic() + wait >= deadline:
             break
         sleep(wait)
-    _log_call(task, model, out, attempts)
+    _log_call(task, model, out, attempts, reasoning_effort)
     if out.kind is None:
         return ChatResult(text=text, error=None, kind=None, attempts=attempts, outcome=out)
     detail = out.detail
@@ -1681,7 +1709,7 @@ async def _json_once(
     try:
         body = build_body(
             model, prompt, max_tokens=max_tokens, system=system, stream=False,
-            temperature=0, response_format={"type": "json_object"},
+            temperature=0, response_format={"type": "json_object"}, reasoning_effort=JUDGE_REASONING_EFFORT,
         )
         client = _async_client()
         request = client.build_request(
@@ -1740,7 +1768,8 @@ async def complete_json(
 ) -> JsonResult:
     """非串流、JSON 模式的單次呼叫（judge 用）。任何失敗都轉成結果，不往外拋（`CancelledError` 除外）。
 
-    請求固定 `stream=false`、`response_format={"type":"json_object"}`、`temperature=0`、推理關（`build_body`）。
+    請求固定 `stream=false`、`response_format={"type":"json_object"}`、`temperature=0`、推理關
+    （`JUDGE_REASONING_EFFORT`，不吃任何推理旋鈕：judge 換推理強度＝換量尺）。
     JSON 模式要求 prompt 含「json」字樣，現行四支 judge 系統提示都有「只輸出 JSON」，所以不必改提示（改了就是
     換尺，`judge_prompt_sha` 會變）。
 

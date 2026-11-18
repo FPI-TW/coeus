@@ -16,7 +16,7 @@
 | `auth_failed` | 503 | 探測回 401 或其他 403；或沒有目前 provider 的金鑰 |
 | `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx）；單次不算 |
 | `indeterminate` | 503 | 判斷不出來：端點設定錯（404 等）、其他未預期的回應 |
-| `misconfigured` | 503 | 主答（`ASK_ANSWER` 任務）解析到白名單外的名稱，或端點設定有誤：每題都回「設定有誤」（見下） |
+| `misconfigured` | 503 | 主答（`ASK_ANSWER`）模型不在白名單、推理旋鈕拼錯或端點設定有誤：每題都回設定有誤（見下） |
 
 - **沒有餘額可查，所以沒有「快用完」的預警**：OpenAI、OpenCode Go、Azure、Anthropic 都沒有查餘額的 API，額度用完只有
   真實請求碰到才知道。預算告警請在各供應商的後台設定（`docs/production_resilience.md`）。
@@ -31,6 +31,7 @@
   把 `ASK_ANSWER_MODEL` 設成白名單外名稱，這個 503 是預期的（見 `docs/production_resilience.md`）。
   端點設定有誤（`llm_models.config_problems`：缺 Azure 的端點或 api-version、自架端點沒填網址、宣告格式錯）同樣歸
   `misconfigured`、不探端點：`llm_http` 對每個請求都會在送出前以 config 失敗，帳號狀態一樣回答不了。
+  主答的推理旋鈕（`ASK_ANSWER_REASONING`）拼錯同理（`llm_models.reasoning_problems`）。
 
 ## 已知限制
 
@@ -185,12 +186,16 @@ async def report() -> tuple[str, int]:
     global _last_reported
     bad = misconfigured_tasks()
     problems = llm_models.config_problems()
+    reasoning = llm_models.reasoning_problems(ASK_CRITICAL_TASKS)
     if bad:
         state = MISCONFIGURED
         detail = "、".join(f"{t}={m!r}" for t, m in bad.items()) + " 不在模型白名單，每題都會回設定有誤"
     elif problems:
         state = MISCONFIGURED
         detail = f"LLM_PROVIDER={llm_models.provider()} 的端點設定有誤：" + "；".join(problems)
+    elif reasoning:
+        state = MISCONFIGURED
+        detail = "推理強度設定有誤，每題都會回設定有誤：" + "；".join(reasoning)
     else:
         state, detail = await _account_state()
     if state != _last_reported:

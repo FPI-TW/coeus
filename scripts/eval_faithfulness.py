@@ -47,7 +47,7 @@ from sqlalchemy import text  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.judge_schema import is_current_judge, judge_identity, judge_model_of  # noqa: E402
-from app.services.llm_models import JUDGE_LINEAGE_LUNA, judge_lineage  # noqa: E402
+from app.services.llm_models import CURRENT_JUDGE_LINEAGES, judge_lineage  # noqa: E402
 
 # (表, 識別欄位)。以 dict 保留是為了 summarize／_fetch 對來源一視同仁；
 # 研報 PDF 那一半的來源表已隨功能移除（2026-09）。
@@ -102,7 +102,7 @@ def summarize(rows: list[dict], min_score: float, *, judge_model: str | None = N
         # 窗期內現行 judge 最早的一筆（日期）；與監控卡的 judge_since 同義。
         "judge_since": min((str(r["created_at"])[:10] for r in checked), default=None),
         # 比照監控卡：現行系譜且窗期內還有其他判定尺的列＝剛換尺（frontend/src/lib/judgeScale.ts）。
-        "new_scale": lineage == JUDGE_LINEAGE_LUNA and other > 0,
+        "new_scale": lineage in CURRENT_JUDGE_LINEAGES and other > 0,
         "total": total,
         "checked": len(checked),
         "other_judge_checked": other,

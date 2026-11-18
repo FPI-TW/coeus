@@ -61,10 +61,12 @@ class LeafModuleTests(unittest.TestCase):
 
 
 class TableTests(unittest.TestCase):
-    def test_single_model_whitelist(self):
-        """所有任務同一顆模型；白名單只有它，要加名稱就發 PR（換模型要重新評測）。"""
+    def test_builtin_whitelist(self):
+        """所有任務預設同一顆模型；內建白名單是 Luna 與 Sol，Go 沒有 Sol。要加名稱就發 PR（換模型要重新評測）。"""
         self.assertEqual(lm.DEFAULT_MODEL, "gpt-6-luna")
-        self.assertEqual(lm.HTTP_MODELS, frozenset({"gpt-6-luna"}))
+        self.assertEqual(lm.HTTP_MODELS, frozenset({"gpt-6-luna", "gpt-6-sol"}))
+        self.assertEqual(lm.OPENCODE_GO_UNAVAILABLE, frozenset({"gpt-6-sol"}))
+        self.assertEqual(set(lm.BUILTIN_JUDGE_LINEAGE), set(lm.HTTP_MODELS), "每個內建名稱都要有量尺系譜")
 
     def test_table_covers_every_task(self):
         self.assertEqual(set(lm.MODEL_DEFAULTS), set(lm.TASK_ENV))
@@ -348,7 +350,7 @@ class ConftestModelGuardTests(unittest.TestCase):
     """
 
     def test_runtime_values(self):
-        for key in lm.TASK_ENV.values():
+        for key in (*lm.TASK_ENV.values(), *lm.TASK_REASONING_ENV.values()):
             self.assertEqual(os.environ.get(key), "", key)
         self.assertEqual(os.environ.get("LLM_PROVIDER"), "openai")
         self.assertEqual(os.environ.get("LLM_ENV_FILE"), "/nonexistent/report-mark-llm")
@@ -382,7 +384,7 @@ class ConftestModelGuardTests(unittest.TestCase):
                 if body_assigns_environ:
                     loop_keys |= {e.value for e in node.iter.elts if isinstance(e, ast.Constant)}
         self.assertLessEqual({"LLM_PROVIDER", "LLM_ENV_FILE", "LLM_DEFAULT_MODEL"}, assigned)
-        self.assertEqual(loop_keys, set(lm.TASK_ENV.values()))
+        self.assertEqual(loop_keys, set(lm.TASK_ENV.values()) | set(lm.TASK_REASONING_ENV.values()))
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
 """統一 LLM 串流客戶端：`llm_http` 是唯一的 backend。
 
-`stream_completion` 只接受目前 provider 白名單內的 model（`llm_models.allowed_models`：`openai`／`opencode_go` 是
-內建的 `HTTP_MODELS`，其他 provider 是設定宣告的名稱），交給 `llm_http.astream_chat`（首字期限、錯誤 kind、partial，
+`stream_completion` 只接受目前 provider 白名單內的 model（`llm_models.allowed_models`：`openai` 是內建的 `HTTP_MODELS`、
+`opencode_go` 扣掉 Go 沒有的 Sol，其他 provider 是設定宣告的名稱），依任務解析推理強度（`llm_models.resolve_reasoning`）
+後交給 `llm_http.astream_chat`（首字期限、錯誤 kind、partial，
 見 `_stream_http`；各 provider 的差異全在 `llm_http`，這一層的重試與截斷語意與 provider 無關）。其他名稱
 （含 `claude-*`、CLI 別名、打錯字、空字串）一律拋 `LLMUnavailableError(kind="config")`，`allow_web=True` 也是——
 不會被送到付費端點，也沒有備援可以改走。
@@ -19,7 +20,13 @@ from collections.abc import AsyncIterator
 
 from app.config import get_settings
 from app.services import llm_http
-from app.services.llm_models import TASK_ASK_ANSWER, is_http_model, resolve_model
+from app.services.llm_models import (
+    TASK_ASK_ANSWER,
+    ReasoningConfigError,
+    is_http_model,
+    resolve_model,
+    resolve_reasoning,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +121,29 @@ def _truncated_reason(out: llm_http.ChatOutcome) -> str:
     return out.kind or llm_http.OTHER
 
 
+def generation_tokens(usage: dict | None) -> dict | None:
+    """usage → 生成端的 token 用量 {prompt, completion, reasoning}（評測逐題記錄用）；沒有用量回 None。"""
+    if not isinstance(usage, dict):
+        return None
+    details = usage.get("completion_tokens_details")
+    reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
+    return {
+        "prompt": usage.get("prompt_tokens"),
+        "completion": usage.get("completion_tokens"),
+        # 推理關時供應商可能不回 completion_tokens_details：推理 token 就是 0（scripts/_claude_cli._tokens 同一條規則）
+        "reasoning": int(reasoning or 0),
+    }
+
+
+def _record_outcome(meta: dict | None, out: llm_http.ChatOutcome, effort: str) -> None:
+    """把最後一次嘗試的首字時間與用量寫進 meta（`ttft_ms`、`tokens`、`reasoning_effort`）。"""
+    if meta is None:
+        return
+    meta["reasoning_effort"] = effort
+    meta["ttft_ms"] = out.ttft_ms
+    meta["tokens"] = generation_tokens(out.usage)
+
+
 def _user_id(task: str) -> str:
     """固定字串、不帶個資（官方用於內容安全、KV cache 與排程的隔離）。"""
     return f"{'eval' if task.startswith('eval') else 'web'}-{task}"
@@ -129,6 +159,7 @@ async def _stream_http(
     meta: dict | None,
     max_tokens: int | None,
     task: str,
+    effort: str = "none",
 ) -> AsyncIterator[str]:
     """HTTP 路徑的外層迴圈：重試策略、partial 與截斷訊號（逐次呼叫在 llm_http.astream_chat）。
 
@@ -159,6 +190,7 @@ async def _stream_http(
             async with contextlib.aclosing(llm_http.astream_chat(
                 model, prompt, max_tokens=tokens, first_token_timeout=timeout,
                 system=system, task=task, user_id=_user_id(task), total_timeout=total_timeout,
+                reasoning_effort=effort,
             )) as agen:
                 async for item in agen:
                     if isinstance(item, llm_http.ChatOutcome):
@@ -174,6 +206,7 @@ async def _stream_http(
             ) from exc
         if out is None:  # astream_chat 的契約是恰好一個 outcome；防禦
             out = llm_http.ChatOutcome(kind=llm_http.OTHER, detail="串流未回報結局", streamed=streamed)
+        _record_outcome(meta, out, effort)
 
         if out.kind is None:
             if meta is not None:
@@ -217,6 +250,7 @@ async def stream_completion(
     meta: dict | None = None,
     max_tokens: int | None = None,
     task: str | None = None,
+    reasoning: str | None = None,
 ) -> AsyncIterator[str]:
     """串流呼叫 LLM，逐段 yield 回答文字（語意見 `_stream_http`）。
 
@@ -224,6 +258,11 @@ async def stream_completion(
     - `allow_web=True`：網搜沒有後端。先於 model 檢查，
       所以 `ASK_WEB_MODEL` 填什麼都一樣。時效題據此退回 M4 婉拒。
     - model 不在白名單（`llm_models.is_http_model`）：含 `claude-*`、CLI 別名、打錯字、空字串。
+    - 推理強度不合法（`llm_models.resolve_reasoning`：該任務的 `*_REASONING` 旋鈕拼錯，或 `reasoning` 不合法）。
+
+    `reasoning`：推理強度（`none|minimal|low|medium|high`）。None＝依 `task` 讀該任務的旋鈕（`llm_models.CALL_TASK`
+    把呼叫點標籤對到任務；judge 與認不得的標籤固定 none）。只有評測（`eval/run_ragas.py --generator-reasoning`）
+    明確指定。
 
     `max_tokens`、`task`（keyword-only）：每個呼叫點都要給（tests/test_llm.py 靜態釘住）。`max_tokens`
     是請求的輸出上限（第二版計畫 §8 逐點訂）；`task` 進結構化 log 的 `llm_call task=` 與請求的 `user_id`。
@@ -233,7 +272,8 @@ async def stream_completion(
     收尾。`retries`：只重試還沒吐字的 overloaded／network。
 
     meta（選填、呼叫端給的空 dict）：正常結束後寫入 `meta["truncated"]`（已吐的字照常送出，但後面被
-    砍掉了），截斷時另寫 `meta["truncated_reason"]`。
+    砍掉了），截斷時另寫 `meta["truncated_reason"]`。每次嘗試結束都以最後一次覆寫 `meta["reasoning_effort"]`、
+    `meta["ttft_ms"]`（首個 content 字的毫秒數，沒吐字為 None）與 `meta["tokens"]`（`generation_tokens`）。
     """
     if allow_web:
         raise LLMUnavailableError(
@@ -245,11 +285,15 @@ async def stream_completion(
             f"model={model!r} 不在模型白名單（task={task or '-'}；沒有其他 backend）：檢查該任務的模型旋鈕",
             reason=UNAVAILABLE_API_ERROR, kind=llm_http.CONFIG,
         )
+    try:
+        effort = resolve_reasoning(task, override=reasoning)
+    except ReasoningConfigError as exc:
+        raise LLMUnavailableError(str(exc), reason=UNAVAILABLE_API_ERROR, kind=llm_http.CONFIG) from None
     # aclosing：呼叫端在兩段文字之間 aclose 本產生器（`_with_heartbeat` 的用戶端中斷）時，
     # 內層產生器要當下收掉、關閉 httpx 回應；只靠 `async for` 的話要等 GC 才會關。
     async with contextlib.aclosing(_stream_http(
         prompt, model=model, system=system, timeout=timeout, retries=retries,
-        meta=meta, max_tokens=max_tokens, task=task or "-",
+        meta=meta, max_tokens=max_tokens, task=task or "-", effort=effort,
     )) as chunks:
         async for chunk in chunks:
             yield chunk

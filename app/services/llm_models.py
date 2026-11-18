@@ -25,20 +25,22 @@
 
 | 值 | 路徑 | 可送的模型 |
 |---|---|---|
-| `openai`（預設；空值＝預設） | OpenAI 官方 Chat Completions | 內建白名單 `HTTP_MODELS` |
-| `opencode_go` | 同一顆模型經 OpenCode Go 的 OpenAI 相容端點 | 內建白名單 |
+| `openai`（預設；空值＝預設） | OpenAI 官方 Chat Completions | 內建白名單 `HTTP_MODELS`（`gpt-6-luna`、`gpt-6-sol`） |
+| `opencode_go` | 同一顆模型經 OpenCode Go 的 OpenAI 相容端點 | 內建白名單扣掉 `OPENCODE_GO_UNAVAILABLE`（Sol） |
 | `azure_openai` | Azure OpenAI 的 deployment 路徑（`api-key`、`api-version`） | `AZURE_OPENAI_DEPLOYMENTS` 宣告的 |
 | `anthropic` | Anthropic 原生 Messages API（`x-api-key`＋`anthropic-version`） | `ANTHROPIC_MODELS` 宣告的 |
 | `openai_compatible` | 自架的 OpenAI 相容端點（vLLM 等） | `OPENAI_COMPATIBLE_MODELS` 宣告的 |
 
-內建的兩條路徑（`openai`、`opencode_go`）白名單、預設表、judge 系譜一律相同，同一個部署的兩個環境
-各走一條時，產出與量尺因此可以互相代表。
+內建的兩條路徑（`openai`、`opencode_go`）預設表與 judge 系譜相同，同一個部署的兩個環境各走一條時，預設的產出與
+量尺因此可以互相代表。白名單不同：Go 沒有 `gpt-6-sol`，`opencode_go` 設了 Sol 與其他白名單外名稱走同一條路（線上
+config 失敗、批次 rc=2），不會改送 Luna。
 後三者的端點、金鑰與模型名都是部署層設定（環境變數，見 `ENDPOINT_ENV`、`DECLARED_MODELS_ENV`），不進 profile。
 
 ## 白名單＝內建＋設定宣告（`allowed_models`）
 
 白名單是**安全閘門**：不在白名單的名稱一律在送出前以 config 失敗，絕不送到付費端點；它沒有旋鈕可以關。
-內建的 `HTTP_MODELS` 只對 `openai`／`opencode_go` 生效（加名稱要發 PR：換模型要重新評測）。其餘三個 provider
+內建的 `HTTP_MODELS` 只對 `openai`／`opencode_go` 生效（`opencode_go` 另扣掉 `OPENCODE_GO_UNAVAILABLE`；加名稱要發
+PR：換模型要重新評測）。其餘三個 provider
 沒有內建名稱，只認**目前 provider** 的宣告旋鈕列出的名稱——宣告別的 provider 的旋鈕不會放行任何名稱。宣告值格式錯
 （`config_problems`）的那一筆不放行（fail-closed），啟動自檢與批次預檢會說出是哪個旋鈕。
 
@@ -48,6 +50,16 @@
 退役值（`RETIRED_PROVIDERS`：`deepseek`、`claude_cli`、`claude_only`）與未知值：web 記 ERROR、當成 `openai`（線上要
 容錯，檢索等不需要 LLM 的功能不能因一個拼字停擺）；批次在預檢以 rc=2 拒跑（`scripts/_llm_env.require_llm_key`：
 拒跑不花錢，而想「讓 LLM 停下來」的人設了退役值，不能變成照常計費）。
+
+## 推理強度（`resolve_reasoning(task)`）
+
+每個非 judge 任務一個旋鈕 `TASK_REASONING_ENV`（模型旋鈕的 `_MODEL` 換成 `_REASONING`，例如 `ASK_ANSWER_REASONING`）。
+值只接受 `REASONING_EFFORTS`（`none|minimal|low|medium|high`）；未設或空字串＝`none`，請求與加入旋鈕之前逐字相同。
+兩個 judge 任務（`FAITHFULNESS`、`EVAL_JUDGE`）**沒有**旋鈕、固定 `none`：judge 靠推理關才能送 t=0，開推理等於換量尺。
+呼叫點的 log 標籤不一定是任務名（總覽 `ask_overview` 用主答的模型），`CALL_TASK` 把標籤對到任務。
+
+拼錯的值是設定錯誤，與白名單外的模型名同一條路：web 啟動自檢記 ERROR（`reasoning_problems` → `diagnose`）、
+那個任務的呼叫以 config 失敗；批次預檢 rc=2，`run_claude` 拋 `LlmEnvironmentError`。不會猜成某個強度送出去。
 
 注意：預設表只決定「名稱」。名稱不在白名單內的呼叫一律失敗、不會被送到付費端點：
 
@@ -67,9 +79,12 @@ logger = logging.getLogger(__name__)
 
 # 內建的模型**明確白名單**（`openai`／`opencode_go` 用；其他 provider 見模組 docstring「白名單」）。不在白名單的
 # 名稱一律是設定錯誤（沒有其他 backend）：打錯的模型名不該被送到付費端點、拿到 400 後被當成帳號錯誤中止整批。
-# 要加新名稱就發 PR——換模型本來就需要重新評測。
+# 要加新名稱就發 PR——換模型本來就需要重新評測。`HTTP_MODELS` 是 `openai` 的白名單，也是「內建名稱」的全集
+# （judge 系譜據此判定）；`opencode_go` 扣掉 Go 沒有的（`OPENCODE_GO_UNAVAILABLE`）。
 DEFAULT_MODEL = "gpt-6-luna"
-HTTP_MODELS = frozenset({DEFAULT_MODEL})
+SOL_MODEL = "gpt-6-sol"
+HTTP_MODELS = frozenset({DEFAULT_MODEL, SOL_MODEL})
+OPENCODE_GO_UNAVAILABLE = frozenset({SOL_MODEL})
 
 
 def is_http_model(model: str | None, env: Mapping[str, str] | None = None) -> bool:
@@ -82,6 +97,11 @@ def is_http_model(model: str | None, env: Mapping[str, str] | None = None) -> bo
 # （`scripts/eval_faithfulness.py`）共用，所以放在這個葉模組。後兩個是歷史系譜：只用來解讀舊的評測結果與
 # `qa_log.evaluation.judge_model`，**永遠不跟著現行預設改**。
 JUDGE_LINEAGE_LUNA = "gpt-6-luna-2026-11"
+JUDGE_LINEAGE_SOL = "gpt-6-sol-2026-11"
+# 內建名稱 → 系譜。每個內建名稱一把尺：Luna 與 Sol 當 judge 量出的分數不可比（eval_compare 的 META 鍵不同＝回 2）。
+BUILTIN_JUDGE_LINEAGE: dict[str, str] = {DEFAULT_MODEL: JUDGE_LINEAGE_LUNA, SOL_MODEL: JUDGE_LINEAGE_SOL}
+# 現行（非歷史）的內建系譜：監控卡與離線彙總據此判斷「剛換尺」。
+CURRENT_JUDGE_LINEAGES = frozenset(BUILTIN_JUDGE_LINEAGE.values())
 JUDGE_LINEAGE_DEEPSEEK_ERA = "deepseek-2026-09"
 JUDGE_LINEAGE_CLAUDE = "claude-haiku"
 
@@ -92,12 +112,14 @@ JUDGE_LINEAGE_DECLARED_PREFIX = "declared:"
 
 
 def judge_lineage(model: str | None, env: Mapping[str, str] | None = None) -> str:
-    """judge 屬於哪個量尺系譜：內建白名單是現行系譜，目前 provider 宣告的名稱自成一系，其餘依名稱歸到歷史系譜。
+    """judge 屬於哪個量尺系譜：內建名稱各有現行系譜（`BUILTIN_JUDGE_LINEAGE`），目前 provider 宣告的名稱自成一系，
+    其餘依名稱歸到歷史系譜。
 
-    內建名稱看 `HTTP_MODELS` 本身、不看目前 provider：同一顆模型經哪條路徑送達都是同一把尺。
+    內建名稱看 `BUILTIN_JUDGE_LINEAGE` 本身、不看目前 provider：同一顆模型經哪條路徑送達都是同一把尺。
     """
-    if model in HTTP_MODELS:
-        return JUDGE_LINEAGE_LUNA
+    builtin = BUILTIN_JUDGE_LINEAGE.get(model or "")
+    if builtin is not None:
+        return builtin
     if model and model in declared_models(env):
         return JUDGE_LINEAGE_DECLARED_PREFIX + model
     return JUDGE_LINEAGE_DEEPSEEK_ERA if (model or "").startswith("deepseek-") else JUDGE_LINEAGE_CLAUDE
@@ -155,6 +177,25 @@ ONLINE_TASKS: tuple[str, ...] = (
 #   config 錯誤（時效題據此退回 M4 婉拒），填任何名稱都不會讓網搜變可用；`ASK_ENABLE_WEB` 預設也隨之是關。
 MODEL_DEFAULTS: dict[str, str] = {
     task: ("" if task == TASK_ASK_WEB else DEFAULT_MODEL) for task in TASK_ENV
+}
+
+# ── 推理強度（模組 docstring「推理強度」）────────────────────────────────────────
+REASONING_NONE = "none"
+REASONING_EFFORTS = (REASONING_NONE, "minimal", "low", "medium", "high")
+# judge 沒有推理旋鈕、固定 none（t=0 只在推理關時送得出去；開推理＝換量尺）。
+JUDGE_TASKS = frozenset({TASK_FAITHFULNESS, TASK_EVAL_JUDGE})
+# 任務 → 推理旋鈕：模型旋鈕的 `_MODEL` 換成 `_REASONING`（介面契約，評測工具照這個名稱設）。
+TASK_REASONING_ENV: dict[str, str] = {
+    task: knob.removesuffix("_MODEL") + "_REASONING" for task, knob in TASK_ENV.items() if task not in JUDGE_TASKS
+}
+# 呼叫點的 log 標籤（`stream_completion(task=…)`、`run_claude(meta={"task": …})`）→ 任務。任務名本身對到自己；
+# 其餘是用某個任務的模型、但 log 另取名字的呼叫點。tests/test_llm_providers.py 掃過所有呼叫點，漏列的標籤會紅。
+CALL_TASK: dict[str, str] = {
+    **{task: task for task in TASK_ENV},
+    "ask_overview": TASK_ASK_ANSWER,      # 總覽潤飾（answer.py，用主答的模型）
+    "qa_agentic_eval": TASK_QA_PLANNER,   # agentic 證據評估（agentic_qa.py）
+    "eval_answer": TASK_ASK_ANSWER,       # 評測生成（run_ragas 另以 --generator-reasoning 明確指定）
+    "eval_draft": TASK_EVAL_JUDGE,        # 評測題草擬（draft_eval_questions.py，用離線 judge 的模型）
 }
 
 PROVIDER_OPENAI = "openai"
@@ -327,9 +368,12 @@ def declared_models(env: Mapping[str, str] | None = None) -> frozenset[str]:
 
 
 def allowed_models(env: Mapping[str, str] | None = None) -> frozenset[str]:
-    """目前 provider 的白名單（模組 docstring「白名單」）。"""
-    if provider(env) in BUILTIN_MODEL_PROVIDERS:
+    """目前 provider 的白名單（模組 docstring「白名單」）：`openai`＝`HTTP_MODELS`，`opencode_go` 扣掉 Go 沒有的。"""
+    prov = provider(env)
+    if prov == PROVIDER_OPENAI:
         return HTTP_MODELS
+    if prov == PROVIDER_OPENCODE_GO:
+        return HTTP_MODELS - OPENCODE_GO_UNAVAILABLE
     return declared_models(env)
 
 
@@ -439,6 +483,70 @@ def resolve_all(tasks: Iterable[str], env: Mapping[str, str] | None = None) -> d
     return {t: resolve_model(t, env=env) for t in tasks}
 
 
+class ReasoningConfigError(ValueError):
+    """推理旋鈕的值不合法（拼錯）。線上轉成 config 失敗、批次轉成 rc=2（模組 docstring「推理強度」）。"""
+
+
+def reasoning_task(label: str | None) -> str | None:
+    """呼叫點標籤 → 任務（`CALL_TASK`）；認不得的標籤回 None（推理照 none，與加入旋鈕之前相同）。"""
+    return CALL_TASK.get(label or "")
+
+
+def resolve_reasoning(
+    task: str | None,
+    *,
+    override: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """這次呼叫的推理強度。`task` 可以是任務名或呼叫點標籤（`CALL_TASK`）。
+
+    - `override`：呼叫端明確指定（`eval/run_ragas.py` 的 `--generator-reasoning`）；None＝讀該任務的旋鈕。
+    - judge 任務、認不得的標籤：一律 `none`，不讀旋鈕（judge 本來就沒有旋鈕）。
+    - 未設或空字串＝`none`；不在 `REASONING_EFFORTS` 的值拋 `ReasoningConfigError`（說出是哪個旋鈕）。
+    """
+    resolved = reasoning_task(task)
+    if override is not None:
+        value = override.strip()
+        if value and value not in REASONING_EFFORTS:
+            raise ReasoningConfigError(
+                f"推理強度 {override!r} 不合法（只接受 {'|'.join(REASONING_EFFORTS)}；task={task or '-'}）"
+            )
+        if resolved in JUDGE_TASKS and value not in ("", REASONING_NONE):
+            raise ReasoningConfigError(f"judge 任務 {resolved} 的推理強度固定 none，不能指定 {value!r}")
+        return value or REASONING_NONE
+    knob = TASK_REASONING_ENV.get(resolved or "")
+    if knob is None:
+        return REASONING_NONE
+    value = _env_value(env, knob)
+    if not value:
+        return REASONING_NONE
+    if value not in REASONING_EFFORTS:
+        raise ReasoningConfigError(f"{knob}={value!r} 不合法（只接受 {'|'.join(REASONING_EFFORTS)}；空值＝none）")
+    return value
+
+
+def reasoning_problems(tasks: Iterable[str], env: Mapping[str, str] | None = None) -> list[str]:
+    """這些任務的推理旋鈕哪些拼錯（給人看的句子，空＝沒問題）。啟動自檢、批次預檢與 `/healthz/llm` 共用。"""
+    out: list[str] = []
+    for task in tasks:
+        try:
+            resolve_reasoning(task, env=env)
+        except ReasoningConfigError as exc:
+            out.append(str(exc))
+    return out
+
+
+def resolve_all_reasoning(tasks: Iterable[str], env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """任務 → 推理強度（拼錯的任務記為 `?`；細節由 `reasoning_problems` 說）。給啟動 log 與診斷頁看。"""
+    out: dict[str, str] = {}
+    for task in tasks:
+        try:
+            out[task] = resolve_reasoning(task, env=env)
+        except ReasoningConfigError:
+            out[task] = "?"
+    return out
+
+
 def diagnose(
     resolved: Mapping[str, str],
     *,
@@ -447,6 +555,7 @@ def diagnose(
     prov: str = PROVIDER_OPENAI,
     allowed: frozenset[str] | None = None,
     problems: Iterable[str] = (),
+    reasoning: Iterable[str] = (),
 ) -> list[tuple[int, str]]:
     """啟動自檢：解析結果 → [(logging level, 訊息)]。純函式，web/server.py 負責記錄。
 
@@ -458,6 +567,7 @@ def diagnose(
       要說的是總閘：`web_enabled`（`ASK_ENABLE_WEB`）開著 → ERROR——時效題會退回婉拒、使用者開了網搜
       的主答會以設定錯誤失敗。
     - `problems`：目前 provider 的端點設定錯誤（`config_problems`），每一則一行 ERROR。
+    - `reasoning`：推理旋鈕拼錯（`reasoning_problems`），每一則一行 ERROR：那個任務每次呼叫都會以設定錯誤失敗。
     `allowed`：目前 provider 的白名單（`allowed_models`；None＝從環境讀）。
     都不擋啟動：檢索、閱讀頁、雷達、簡報的讀取都不需要 LLM。
     """
@@ -484,6 +594,8 @@ def diagnose(
         ))
     for problem in problems:
         out.append((logging.ERROR, f"LLM 端點設定（LLM_PROVIDER={prov}）：{problem}"))
+    for problem in reasoning:
+        out.append((logging.ERROR, f"推理強度設定：{problem}，該任務每次呼叫都會以設定錯誤失敗"))
     if web_enabled:
         out.append((
             logging.ERROR,
