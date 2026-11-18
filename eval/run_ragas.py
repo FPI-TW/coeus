@@ -29,6 +29,11 @@ M5 起：每 case 記 latency_ms（檢索＋生成牆鐘，排除 judge）；--a
   `n_effective_<指標>` 與題目集合的雜湊 `judged_ids_sha`（定義在 `scripts/eval_compare.py`，
   只有那一份）；兩邊不同時 eval_compare 回 2。處置是補跑到兩邊相同題目，或用
   `eval_compare --common-only` 只在兩邊都有值的題目上比，不是放寬比較器。
+- **生成端推理強度**（`--generator-reasoning`，預設 none）：明確傳給 `stream_completion(reasoning=…)`，不讀
+  `ASK_ANSWER_REASONING`（結果檔要說得出量的是哪個強度，不能依執行者的環境而變）。記進 `config.gen_reasoning` 與
+  summary 的 `gen_reasoning`（eval_compare 只印、不判可比性：它是候選的變因，跟 `gen_model` 同類）；judge 固定 none，
+  記在 `config.judge.reasoning` 與 summary 的 META 鍵 `judge_reasoning`。每 case 記生成端的 `ttft_ms`（首個 content
+  字的毫秒數）與 `gen_tokens`（prompt／completion／reasoning），summary 帶各自的分佈與平均（只列出、不判方向）。
 - `--repeat N` 的彙總規則：每題跑 N 次完整流程（檢索＋生成＋judge），**每題每指標跨 repeat
   取平均**（略過 None）；`n`＝題數（不乘 N），`n_errors`＝N 次全部失敗的題數，
   `n_no_context` 與 `n_judge_errors` 只在該指標 N 次都沒有值時計入。計數因此恆為整數，
@@ -79,10 +84,14 @@ from app.services.embed import embed_query_cached  # noqa: E402
 from app.services.judge_schema import JUDGE_SCHEMA_VERSION, JudgeSchemaError  # noqa: E402
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, LLMUnavailableError, stream_completion  # noqa: E402
 from app.services.llm_http import ACCOUNT_KINDS  # noqa: E402
+from app.services.llm_http import JUDGE_REASONING_EFFORT as JUDGE_REASONING  # noqa: E402
 from app.services.llm_models import (  # noqa: E402
     JUDGE_LINEAGE_CLAUDE,  # noqa: F401 — 以原名重新匯出（tests/test_run_ragas.py）
     JUDGE_LINEAGE_DECLARED_PREFIX,
     JUDGE_LINEAGE_LUNA,
+    JUDGE_LINEAGE_SOL,
+    REASONING_EFFORTS,
+    REASONING_NONE,
     is_http_model,
     judge_lineage,
 )
@@ -232,23 +241,28 @@ def split_contexts(context: str) -> list[str]:
 
 
 async def _generate_answer(
-    question: str, context: str, *, model: str = DEFAULT_MODEL, timeout: float = GEN_TIMEOUT
+    question: str, context: str, *, model: str = DEFAULT_MODEL, timeout: float = GEN_TIMEOUT,
+    reasoning: str = REASONING_NONE, gen_meta: dict | None = None,
 ) -> tuple[str, bool]:
     """以 build_user_prompt + stream_completion 生成答案（跳過 SEARCH_EVENT 控制標記）。
 
-    回 (答案, 是否被截斷)。截斷的判準見 GEN_TIMEOUT 旁的註解。
+    回 (答案, 是否被截斷)。截斷的判準見 GEN_TIMEOUT 旁的註解。`gen_meta`（選填）：寫入 `ttft_ms` 與
+    `tokens`（`llm.generation_tokens` 的形狀）。
     """
     prompt = build_user_prompt(question, context)
     parts: list[str] = []
     meta: dict = {}
     async for chunk in stream_completion(
         prompt, system=SYSTEM_PROMPT, model=model, timeout=timeout, meta=meta,
-        # 評測生成＝主答（同一個上限，改它等於改被評的東西）
-        max_tokens=ASK_ANSWER_MAX_TOKENS, task="eval_answer",
+        # 評測生成＝主答（同一個上限，改它等於改被評的東西）；強度由 --generator-reasoning 明確指定
+        max_tokens=ASK_ANSWER_MAX_TOKENS, task="eval_answer", reasoning=reasoning,
     ):
         if chunk == SEARCH_EVENT:
             continue
         parts.append(chunk)
+    if gen_meta is not None:
+        gen_meta["ttft_ms"] = meta.get("ttft_ms")
+        gen_meta["tokens"] = meta.get("tokens")
     answer = filter_unknown_citations("".join(parts), range(1, len(split_contexts(context)) + 1))
     return answer, bool(meta.get("truncated"))
 
@@ -282,6 +296,7 @@ async def eval_question(
     retrieval_params: dict,
     agentic: bool = False,
     gen_model: str = DEFAULT_MODEL,
+    gen_reasoning: str = REASONING_NONE,
 ) -> dict:
     """單題：retrieve→generate→三指標。
 
@@ -295,7 +310,8 @@ async def eval_question(
     - 成功時另附私有鍵 "_io"（問題、脈絡、答案、judge 呼叫明細），由 run() 取走供
       --dump-io，不寫進結果檔。
 
-    latency_ms 量測「檢索＋生成」牆鐘（agentic 時含規劃/評估/補查；排除 judge）。
+    latency_ms 量測「檢索＋生成」牆鐘（agentic 時含規劃/評估/補查；排除 judge）。ttft_ms 是生成端首個 content
+    字的毫秒數，gen_tokens 是生成端的用量（prompt／completion／reasoning；沒有用量時 None）。
     agentic=True 走 M5 流程：plan_queries（profile="qa"）與第一輪 retrieve_context
     並行 → run_agentic（忽略 stage 事件、取 outcome 的合併結果）→ 以合併 context
     生成，並記 rounds/subqueries_run/skipped 歸因欄位（補查是否被跳過可歸因）。
@@ -344,8 +360,11 @@ async def eval_question(
                 question, filters=filters, **retrieval_params
             )
         contexts = split_contexts(context)
+        gen_meta: dict = {}
         try:
-            answer, truncated = await _generate_answer(question, context, model=gen_model)
+            answer, truncated = await _generate_answer(
+                question, context, model=gen_model, reasoning=gen_reasoning, gen_meta=gen_meta,
+            )
         except LLMUnavailableError as e:
             if e.kind in ACCOUNT_KINDS:
                 raise GeneratorAccountError(f"生成端（{gen_model}）API[{e.kind}] {e}") from e
@@ -382,6 +401,8 @@ async def eval_question(
             "answer_relevancy_sims": [round(s, 4) for s in ar_detail.sims] if ar_detail else [],
             "n_contexts": len(contexts),
             "latency_ms": latency_ms,
+            "ttft_ms": gen_meta.get("ttft_ms"),
+            "gen_tokens": gen_meta.get("tokens"),
             "cited": has_valid_citation(answer, len(contexts)),
             "simplified": looks_simplified(answer),
             "gen_truncated": truncated,
@@ -419,9 +440,22 @@ def _percentile(vals: list, pct: float):
     return ordered[idx]
 
 
+# 生成端 token 用量的鍵（`llm.generation_tokens`）。
+GEN_TOKEN_KEYS = ("prompt", "completion", "reasoning")
+
+
+def _token_mean(cases: list[dict], key: str) -> float | None:
+    vals = [
+        c["gen_tokens"][key] for c in cases
+        if isinstance(c.get("gen_tokens"), dict) and isinstance(c["gen_tokens"].get(key), (int, float))
+    ]
+    return sum(vals) / len(vals) if vals else None
+
+
 def aggregate(per_q: list[dict]) -> dict:
     """各指標均值（略過 error 與 None）、延遲分佈（mean/p50/p95，只算無 error 且有
-    latency_ms 的 case——舊報表 case 無此欄）、計數、門檻旗標。純函式。
+    latency_ms 的 case——舊報表 case 無此欄）、生成端首字時間分佈（ttft_ms_*）與每題平均 token
+    （gen_<鍵>_tokens_mean，`GEN_TOKEN_KEYS`）、計數、門檻旗標。純函式。
 
     n_no_context 只計「F 為 None 且不是 judge 出錯」的題：judge 出錯另計 n_judge_errors，
     混在一起會把量尺故障讀成檢索沒找到東西。
@@ -459,6 +493,7 @@ def aggregate(per_q: list[dict]) -> dict:
         for c in per_q
         if "error" not in c and c.get("latency_ms") is not None
     ]
+    ttfts = [c["ttft_ms"] for c in ok if isinstance(c.get("ttft_ms"), (int, float))]
     return {
         "faithfulness": f,
         "context_precision": cp,
@@ -466,6 +501,10 @@ def aggregate(per_q: list[dict]) -> dict:
         "latency_ms_mean": sum(latencies) / len(latencies) if latencies else None,
         "latency_ms_p50": _percentile(latencies, 50) if latencies else None,
         "latency_ms_p95": _percentile(latencies, 95) if latencies else None,
+        "ttft_ms_mean": sum(ttfts) / len(ttfts) if ttfts else None,
+        "ttft_ms_p50": _percentile(ttfts, 50) if ttfts else None,
+        "ttft_ms_p95": _percentile(ttfts, 95) if ttfts else None,
+        **{f"gen_{k}_tokens_mean": _token_mean(ok, k) for k in GEN_TOKEN_KEYS},
         "n": len(per_q),
         "n_errors": n_errors,
         "n_no_context": n_no_context,
@@ -486,7 +525,7 @@ def merge_repeats(runs: list[dict]) -> dict:
     - 全部 N 次都 error → 整題 error（取最後一次的訊息）。
     - 三指標、cited、simplified：跨成功的那幾次取平均，略過 None（布林當 0/1）。
       某指標沒有任何值、且至少一次是 judge 出錯 → 記進 judge_errors（取最後一則）。
-    - latency_ms 取平均後四捨五入成整數；gen_truncated 任一次截斷即為真。
+    - latency_ms、ttft_ms 取平均後四捨五入成整數；gen_tokens 逐鍵取平均後四捨五入；gen_truncated 任一次截斷即為真。
     - 逐次原始結果留在 runs（已去掉私有的 _io）。
     """
     base = {"id": runs[0].get("id"), "question": runs[0].get("question")}
@@ -510,6 +549,13 @@ def merge_repeats(runs: list[dict]) -> dict:
     merged["n_contexts"] = ok[0].get("n_contexts")
     latency = _avg("latency_ms")
     merged["latency_ms"] = round(latency) if latency is not None else None
+    ttft = _avg("ttft_ms")
+    merged["ttft_ms"] = round(ttft) if ttft is not None else None
+    token_means = {k: _token_mean(ok, k) for k in GEN_TOKEN_KEYS}
+    merged["gen_tokens"] = (
+        {k: round(v) if v is not None else None for k, v in token_means.items()}
+        if any(v is not None for v in token_means.values()) else None
+    )
     merged["cited"] = _avg("cited")
     merged["simplified"] = _avg("simplified")
     merged["gen_truncated"] = any(r.get("gen_truncated") for r in ok)
@@ -569,6 +615,11 @@ def lineage_notes(model: str) -> list[str]:
             f"judge 系譜 {lineage}（judge={model}，自 2026-11 起的新量尺）：與舊系譜的結果"
             "（eval/baselines/ 裡 2026-11 之前的基準線）不可比，eval_compare 回 2 是預期；門檻數值不變。"
         ]
+    if lineage == JUDGE_LINEAGE_SOL:
+        return [
+            f"judge 系譜 {lineage}（judge={model}）：與 {JUDGE_LINEAGE_LUNA}（judge=gpt-6-luna）及舊系譜的結果不可比，"
+            "eval_compare 回 2 是預期；門檻數值不變。"
+        ]
     return [f"judge 系譜 {lineage}（judge={model}，舊量尺）：與現行 judge 的結果不可比。"]
 
 
@@ -589,6 +640,7 @@ def build_config(
     judge_observed: dict | None = None,
     corpus_id: str | None = None,
     profile: str | None = None,
+    generator_reasoning: str = REASONING_NONE,
 ) -> dict:
     """結果檔的 config 快照：只供 eval_compare 印差異，不參與判定（不放進 summary，
     否則每個新鍵都會觸發退出碼 3）。
@@ -613,6 +665,7 @@ def build_config(
         models["agentic_evaluate"] = settings.qa_planner_model
     config = {
         "gen_model": generator_model,
+        "gen_reasoning": generator_reasoning,
         "gen_timeout": GEN_TIMEOUT,
         "models": models,
         "judge": {
@@ -622,6 +675,7 @@ def build_config(
             "prompt_sha": judge_prompt_sha(),
             "schema_version": JUDGE_SCHEMA_VERSION,
             "lineage": judge_lineage(judge_model),
+            "reasoning": JUDGE_REASONING,
             "max_tokens": {_JUDGE_TASKS[k]: v for k, v in JUDGE_MAX_TOKENS_BY_SYSTEM.items()},
             "observed": judge_observed or {},
         },
@@ -656,6 +710,9 @@ def check_baseline_config(baseline: dict, current: dict) -> None:
         "agentic", "concurrency", "repeat", "queryset_sha256", "scope", "limit", "corpus_id",
     )
     changed = [key for key in keys if base.get(key) != current.get(key) or key not in base]
+    # 推理強度：這兩個鍵加入之前的結果一律是 none（推理當時寫死關閉），缺鍵視為 none。
+    if base.get("gen_reasoning", REASONING_NONE) != current.get("gen_reasoning", REASONING_NONE):
+        changed.append("gen_reasoning")
     base_judge, current_judge = base.get("judge"), current["judge"]
     if not isinstance(base_judge, dict):
         changed.append("judge")
@@ -667,6 +724,8 @@ def check_baseline_config(baseline: dict, current: dict) -> None:
                                        "schema_version", "lineage", "max_tokens")
             if key not in base_judge or base_judge[key] != current_judge[key]
         ]
+        if base_judge.get("reasoning", REASONING_NONE) != current_judge.get("reasoning", REASONING_NONE):
+            changed.append("judge.reasoning")
     if changed:
         raise ValueError("基準線設定不可比：" + "、".join(changed))
 
@@ -817,6 +876,7 @@ async def run(
     complete_only: bool = False,
     checkpoint_dir=None,
     profile: str | None = None,
+    generator_reasoning: str = REASONING_NONE,
 ) -> dict:
     """讀題集 → 有界併發 eval_question → aggregate → 寫報表（{summary, config, cases}）。
 
@@ -828,6 +888,8 @@ async def run(
     """
     if repeat < 1:
         raise ValueError("repeat 必須 ≥ 1")
+    if generator_reasoning not in REASONING_EFFORTS:
+        raise ValueError(f"generator_reasoning 必須是 {'|'.join(REASONING_EFFORTS)}")
     if match_baseline is not None or complete_only:
         if not corpus_id or not corpus_id.strip():
             raise ValueError("正式基準流程必須提供 --corpus-id")
@@ -854,7 +916,7 @@ async def run(
             dataset_path=dataset_path, generator_model=generator_model, judge_model=judge_model,
             concurrency=concurrency, repeat=repeat, rerank_top_m=rerank_top_m, scope=scope,
             limit=limit, agentic=agentic, commit=commit, started_at=started_at, corpus_id=corpus_id,
-            profile=profile,
+            profile=profile, generator_reasoning=generator_reasoning,
         )
         check_baseline_config(baseline, current)
 
@@ -867,7 +929,7 @@ async def run(
             dataset_path=dataset_path, generator_model=generator_model, judge_model=judge_model,
             concurrency=concurrency, repeat=repeat, rerank_top_m=rerank_top_m, scope=scope,
             limit=limit, agentic=agentic, commit=commit, started_at="", corpus_id=corpus_id,
-            profile=profile,
+            profile=profile, generator_reasoning=generator_reasoning,
         )
         identity = {"version": 1, "config": identity, "out_path": str(Path(out_path).resolve()) if out_path else None,
                     "question_ids": [q["id"] for q in questions]}
@@ -901,6 +963,7 @@ async def run(
                 retrieval_params=retrieval_params,
                 agentic=agentic,
                 gen_model=generator_model,
+                gen_reasoning=generator_reasoning,
             )
             observed = local_observer.snapshot()
             if checkpoint_path is not None:
@@ -934,6 +997,9 @@ async def run(
     summary["judge_prompt_sha"] = judge_prompt_sha()
     summary["judge_schema_version"] = JUDGE_SCHEMA_VERSION
     summary["judge_lineage"] = judge_lineage(judge_model)
+    summary["judge_reasoning"] = JUDGE_REASONING
+    # 生成端強度：候選的變因，eval_compare 只印兩邊、不判可比性（見模組 docstring）。
+    summary["gen_reasoning"] = generator_reasoning
     config = build_config(
         dataset_path=dataset_path,
         generator_model=generator_model,
@@ -950,6 +1016,7 @@ async def run(
         judge_observed=observer.snapshot(),
         corpus_id=corpus_id,
         profile=profile,
+        generator_reasoning=generator_reasoning,
     )
     report = {"summary": summary, "config": config, "notes": lineage_notes(judge_model), "cases": cases}
     if complete_only or match_baseline is not None:
@@ -984,6 +1051,16 @@ def _print_summary(report: dict) -> None:
             f"latency_ms        : mean={s['latency_ms_mean']:.0f}  "
             f"p50={s['latency_ms_p50']:.0f}  p95={s['latency_ms_p95']:.0f}"
         )
+    if s.get("ttft_ms_mean") is not None:
+        print(
+            f"ttft_ms           : mean={s['ttft_ms_mean']:.0f}  "
+            f"p50={s['ttft_ms_p50']:.0f}  p95={s['ttft_ms_p95']:.0f}"
+        )
+    tokens = [(k, s.get(f"gen_{k}_tokens_mean")) for k in GEN_TOKEN_KEYS]
+    if any(v is not None for _, v in tokens):
+        print("gen_tokens/題     : " + "  ".join(f"{k}={v:.0f}" if v is not None else f"{k}=n/a" for k, v in tokens))
+    gen_effort, judge_effort = s.get("gen_reasoning", REASONING_NONE), s.get("judge_reasoning", REASONING_NONE)
+    print(f"生成端推理強度    : {gen_effort}（judge {judge_effort}）")
     print(
         f"n={s['n']}  errors={s['n_errors']}  no_context={s['n_no_context']}  "
         f"judge_errors={s.get('n_judge_errors', 0)}  truncated={s.get('n_truncated', 0)}"
@@ -1009,6 +1086,8 @@ def _main() -> None:
     parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
     parser.add_argument("--generator-model", default=DEFAULT_MODEL,
                         help=f"生成端 model（預設 {DEFAULT_MODEL}，與問答主答相同）")
+    parser.add_argument("--generator-reasoning", default=REASONING_NONE, choices=REASONING_EFFORTS,
+                        help="生成端推理強度（預設 none；不讀 ASK_ANSWER_REASONING）。judge 固定 none")
     parser.add_argument("--repeat", type=int, default=1,
                         help="每題重跑次數；>1 時每題每指標跨次取平均（彙總規則見模組 docstring）")
     parser.add_argument("--dump-io", default=None, metavar="DIR",
@@ -1056,6 +1135,7 @@ def _main() -> None:
                 scope=args.scope,
                 agentic=args.agentic,
                 generator_model=args.generator_model,
+                generator_reasoning=args.generator_reasoning,
                 repeat=args.repeat,
                 dump_dir=args.dump_io,
                 checkpoint_dir=args.checkpoint_dir,

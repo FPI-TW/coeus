@@ -342,6 +342,51 @@ class TestJudgeLineage(unittest.TestCase):
         self.assertNotIn("judge_lineage", [r.key for r in cmp_.rows])
 
 
+class TestReasoningKeys(unittest.TestCase):
+    """生成端推理強度只印不判（候選的變因）；judge 推理強度是 META；兩者缺鍵推得 none。"""
+
+    BASELINE = REPO_ROOT / "eval" / "baselines" / "baseline-2026-11-10-jluna-gluna-rerank.json"
+
+    def _candidate(self, base: dict, **summary) -> dict:
+        cand = deepcopy(base)
+        cand["summary"].update({
+            "gen_reasoning": "low", "judge_reasoning": "none", "ttft_ms_mean": 900.0, "ttft_ms_p50": 800,
+            "ttft_ms_p95": 2000, "gen_prompt_tokens_mean": 9000.0, "gen_completion_tokens_mean": 700.0,
+            "gen_reasoning_tokens_mean": 300.0, **summary,
+        })
+        return cand
+
+    def test_specs(self):
+        self.assertEqual(ec.METRIC_SPECS["gen_reasoning"].direction, ec.INFO)
+        self.assertEqual(ec.METRIC_SPECS["judge_reasoning"].direction, ec.META)
+        for key in ("ttft_ms_mean", "ttft_ms_p50", "ttft_ms_p95", "gen_prompt_tokens_mean",
+                    "gen_completion_tokens_mean", "gen_reasoning_tokens_mean"):
+            self.assertEqual(ec.METRIC_SPECS[key].direction, ec.INFO, key)
+
+    def test_reasoning_candidate_against_the_current_baseline_is_comparable_and_shows_both_sides(self):
+        base = load(self.BASELINE)
+        self.assertNotIn("gen_reasoning", base["summary"])
+        cmp_ = compare(base, self._candidate(base))
+        self.assertEqual(cmp_.exit_code, 0, (cmp_.incomparable, cmp_.unclassified))
+        r = row(cmp_, "gen_reasoning")
+        self.assertEqual((r.base, r.cand), ("none", "low"))
+        self.assertEqual((row(cmp_, "judge_reasoning").base, row(cmp_, "judge_reasoning").cand), ("none", "none"))
+        self.assertNotIn("gen_reasoning", base["summary"], "with_lineage 不改輸入")
+
+    def test_judge_reasoning_other_than_none_is_incomparable(self):
+        base = load(self.BASELINE)
+        cmp_ = compare(base, self._candidate(base, judge_reasoning="low"))
+        self.assertEqual(cmp_.exit_code, 2)
+        self.assertTrue(any("judge_reasoning" in r for r in cmp_.incomparable), cmp_.incomparable)
+
+    def test_sol_judge_lineage_is_incomparable_with_luna(self):
+        base = load(self.BASELINE)
+        cand = self._candidate(base, judge_model="gpt-6-sol", judge_lineage="gpt-6-sol-2026-11")
+        cmp_ = compare(base, cand)
+        self.assertEqual(cmp_.exit_code, 2)
+        self.assertTrue(any("judge_lineage" in r for r in cmp_.incomparable), cmp_.incomparable)
+
+
 def _judged_doc(base: dict, *, judge_errors: dict[str, list[str]] | None = None, **cp_override) -> dict:
     """以真實 RAGAS 結果檔為底，模擬 run_ragas 的輸出：指定題目的指定指標 judge 出錯（None＋
     judge_errors），再照 run_ragas.aggregate 的規則重寫三個均值、n_effective_* 與 judged_ids_sha。
