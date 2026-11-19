@@ -56,12 +56,31 @@ EC2 instance role 可以讀取這一個 RDS managed master secret（`report_admi
 部署目錄是 `/home/ubuntu/report-mark`，以 `ubuntu` 執行；主機上不用容器跑任何東西（DB 是 RDS、nginx 是 apt 的 systemd 服務）。部署與維運程序在 `docs/production_resilience.md`，與辦公室主機的差異整理在 `README.md`「非辦公室主機」一節與 `deploy/ops/services.staging.toml` 檔頭；主機現況與待確認事項記在 `docs/DEPLOYMENT_STATUS.md`。重建一台時依序要補的東西：
 
 - **DB 連線**：repo 根 `.env` 與 `/etc/default/report-mark-sync` 兩處都設 `REPORT_MARK_DB_URL=postgresql+asyncpg://…@<RDS 端點>:5432/research?ssl=verify-full` 與 `PGSSLROOTCERT=/opt/report-research-infra/rds-global-bundle.pem`（bootstrap 已下載到這個路徑；批次不讀 repo 根 `.env`，漏設會靜默連回 `localhost:5436`）。
-- **schema**：`REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> uv run alembic upgrade head`。`make schema`、`make db-backup`、`make ingest-lowio` 走 `docker exec`，在 RDS 上不適用；migration 前的備份是 RDS 手動快照。
-- **unit**：一律 `sudo deploy/install_units.sh --user ubuntu --root /home/ubuntu/report-mark <unit…>`（安裝時代換使用者、HOME 與 repo 路徑；只複製與 `daemon-reload`，不 enable），不要 `sudo cp`。這台跑的是 `deploy/ops/services.staging.toml` 列出的那些：常駐的 `report-mark-web`，以及 `sync`、`health`／`incident`、`edge-health`／`edge-incident`、`feed-health`／`feed-incident`、`freshness`、`audit`、`r2-reconcile`、`schema-check`、`db-snapshot`、`analytics-rollup`、`security-health`／`security-incident`、`security-retention` 各自的 timer。`/etc/default/report-mark-sync` 要設 `SCHEMA_CHECK_MODE=version`（app 帳號沒有 CREATEDB）。
-- **這台不裝的 unit**：結構上不適用的有 `report-mark-backup`（落點是 NAS；這台只有 RDS 自動備份）、`report-mark-linebot-*`、`report-mark-metrics`（讀 docker cgroup）、`report-mark-container-*`（沒有容器）、`report-mark-backfill`、`report-mark-beacon`（發布端在辦公室主機）。`deploy/systemd/` 裡其餘沒列在 catalog 的 unit 目前也沒裝，完整清單與連帶後果（例如沒有監控匯入器時管理後台不列「主機」「排程工作」「事件」三頁）見 `README.md`「非辦公室主機」與 `docs/DEPLOYMENT_STATUS.md`。
+- **schema**：`REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> uv run alembic upgrade head`。`make schema`、`make ingest-lowio` 走 `docker exec`，在 RDS 上不適用；migration 前的備份是 RDS 手動快照。
+- **unit**：一律 `sudo deploy/install_units.sh --user ubuntu --root /home/ubuntu/report-mark <unit…>`（安裝時代換使用者、HOME 與 repo 路徑；只複製與 `daemon-reload`，不 enable），不要 `sudo cp`。這台跑的是 `deploy/ops/services.staging.toml` 列出的那些：常駐的 `report-mark-web`，以及 `sync`、`health`／`incident`、`edge-health`／`edge-incident`、`feed-health`／`feed-incident`、`freshness`、`audit`、`r2-reconcile`、`schema-check`、`db-snapshot`、`analytics-rollup`、`security-health`／`security-incident`、`security-retention`、`backup`、`audit-anchor`、`delete-accounts`、`replay-deletions` 各自的 timer。`/etc/default/report-mark-sync` 要設 `SCHEMA_CHECK_MODE=version`（app 帳號沒有 CREATEDB）。
+- **這台不裝的 unit**：結構上不適用的有 `report-mark-linebot-*`、`report-mark-metrics`（讀 docker cgroup）、`report-mark-container-*`（沒有容器）、`report-mark-backfill`、`report-mark-beacon`（發布端在辦公室主機）。`deploy/systemd/` 裡其餘沒列在 catalog 的 unit 目前也沒裝，完整清單與連帶後果（例如沒有監控匯入器時管理後台不列「主機」「排程工作」「事件」三頁）見 `README.md`「非辦公室主機」與 `docs/DEPLOYMENT_STATUS.md`。
 - **維運代理**：`report-mark-ops-agent-staging.service`，程式與 catalog 裝在 root 擁有的 `/opt/report-mark-ops/`，web 的 `.env` 設 `OPS_AGENT_ENVIRONMENT=staging`；步驟見 `docs/production_resilience.md`「維運代理」的 EC2 一節。
 - **LLM**：`LLM_PROVIDER=openai`（預設），金鑰 `OPENAI_API_KEY`，模型 `gpt-6-luna`；金鑰不與辦公室主機共用（那台走 `opencode_go`）。R2 bucket 仍共用：在任一台刪改 R2 物件，另一台也受影響。落點與輪替見 `docs/production_resilience.md`「LLM 供應商與金鑰」。
 - **來源監看**：這台的新研報全靠辦公室主機推上來，那台停機或來源段壞掉時這台自己的 sync 照樣 rc=0。web 的 `.env` 設 `HOST_BEACON_WATCH=office`（與辦公室主機的 `HOST_BEACON_NAME` 同名），並裝 `report-mark-feed-health`、`report-mark-feed-incident`；狀態與處置見 `docs/production_resilience.md`「來源主機信標」。
+
+### 應用層備份與稽核錨定
+
+RDS 自動備份（保留 7 天）之外，這台也跑 `report-mark-backup`（03:30，二十一張不可重建的表）與 `report-mark-audit-anchor`（04:15），落點是本機磁碟。`/etc/default/report-mark-sync` 的設定：
+
+| 鍵 | 值 | 為什麼 |
+|---|---|---|
+| `REPORT_MARK_BACKUP_DIR` | `/var/lib/report-mark/backup` | 底下是 `daily/`、`weekly/`、`audit-anchors.jsonl`，以及刪帳的 `account-tombstones.jsonl`（`delete-accounts`／`replay-deletions` 讀寫同一個目錄）。目錄 `ubuntu` 擁有、0750 |
+| `REPORT_MARK_BACKUP_MOUNT` | `/` | `scripts/db_backup.sh` 要求落點是掛載點（防止 NAS 沒掛時靜默寫進與 pgdata 同一塊的磁碟）。這台沒有 NAS，而 DB 在 RDS，本機根檔案系統本來就不是 DB 的儲存，所以掛載點指根目錄 |
+| `DB_BACKUP_VIA` | `direct` | 直接跑主機上的 `pg_dump`／`pg_isready`（bootstrap 裝的 `postgresql-client`），不走 `docker exec` |
+| `PGHOST`、`PGPORT`、`PGUSER`、`PGDATABASE` | 由 `REPORT_MARK_DB_URL` 拆出 | libpq 的連線設定；TLS 沿用同檔的 `PGSSLMODE=verify-full` 與 `PGSSLROOTCERT` |
+| `BACKUP_KEEP_DAILY` | `30` | 日備保留 30 份；週備用預設 4 份 |
+
+- **密碼在 `ubuntu` 的 `~/.pgpass`（0600），不寫進環境檔**：環境檔由多支 unit 共用，而 libpq 會自己讀 `~/.pgpass`。改 app 帳號密碼時這裡要一起改，否則 03:30 的備份以 `DB 不可用` 失敗並告警。
+- **手動備份用 `sudo systemctl start report-mark-backup.service`**：`PG*` 只由 unit 的 `EnvironmentFile` 載入，在 shell 裡 `make db-backup` 連不到 RDS。
+- **安裝**：`sudo deploy/install_units.sh --user ubuntu --root /home/ubuntu/report-mark report-mark-backup.timer report-mark-audit-anchor.timer`，再 `sudo systemctl enable --now` 兩支 timer。首跑後以 `pg_restore --list <dump>` 確認有 21 個 `TABLE DATA`。
+- `ensure_backup_mount.sh` 在這台會印「沒有掛載輔助程式，略過」，屬正常；也不裝 `report-mark-backup.sudoers`（不掛 NAS）。
+- **還原**：照 `docs/production_resilience.md`「還原步驟」，但把 `docker exec -i report-mark-postgres <指令>` 換成主機上直接跑同一個指令（拿掉 `-U postgres`，改用環境檔的 `PGUSER`）：以 `ubuntu` 身分、先 `export $(grep -E '^PG(HOST|PORT|USER|DATABASE|SSLMODE|SSLROOTCERT)=' /etc/default/report-mark-sync)` 帶入連線設定（不要 `source` 整個檔，理由見 `scripts/db_backup.sh` 檔頭），密碼由 `~/.pgpass` 提供。不同之處：app 帳號 `report_mark` 沒有 CREATEDB，步驟 2 的臨時庫要用 master 帳號建；RDS 沒有真正的 superuser，`pg_restore --disable-triggers` 發出的指令要 superuser 才能執行，整組還原（步驟 4）不能照抄，DB 整個壞掉時先用 RDS 快照；整組還原前的 schema 用 `alembic upgrade head`（不是 `make schema`）。還原後一樣要 `audit_anchor.py --verify-only` 與 `replay_deletions.py`。
+- 這些檔在 EC2 本機：整台遺失時備份、錨點與 tombstone 一起消失，DB 只剩 RDS 自動備份。
 
 ### 研報導入：R2 inbox 與同步錯開
 
@@ -235,13 +254,13 @@ aws cloudformation wait stack-update-complete \
 
 ## 已知 drift 與待確認事項
 
-以下是 2026-10-05 留下、之後沒有在 repo 這側重新查證的狀態；動 stack 或 Cloudflare 之前先核對。
+以下除另註查證日期的項目外，是 2026-10-05 留下、之後沒有在 repo 這側重新查證的狀態；動 stack 或 Cloudflare 之前先核對。
 
 - **RDS 備份保留期的 drift**：實際值是 7 天（2026-10-05 以 RDS `ModifyDBInstance` 原地調整，未替換執行個體），repo 的範本也是 7，但當時**已部署的範本仍記錄 1 天**。一般的 UPDATE change set 會把 `Database` 的 `BackupRetentionPeriod` 1 → 7 標成 `Replacement=Conditional`，照上節的規則要停止、不執行。正確做法是建立 drift-aware change set：在上節的 `create-change-set` 加 `--deployment-mode REVERT_DRIFT`，核對完整 actual／previous／desired state；預期只有 `Database` 的保留期對齊與 `Ec2Instance` 的 Metadata 修改（`Replacement=False`，不得動 `ImageId` 或其他 Properties），不得替換 EC2／RDS，也不得修改 IAM 權限。
   參考 [drift-aware change sets](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/drift-aware-change-sets.html)。
 - **drift-aware change set 需要讀 IAM**：`PowerUserAccess` 缺 `iam:GetRole`，計畫會在讀取 EC2 role 時失敗。先由 IAM 管理者把 [staging-state-read-policy.json](staging-state-read-policy.json) 加到部署操作身分（只開放讀取現有的 EC2 role／instance profile，不含 IAM 寫入或 PassRole），重新佈建 SSO permission set 後取得新 session。
 - **HTTP → HTTPS 轉址**：2026-10-05 驗收時 `http://research.tingfong.com/` 回 522（來源站不聽 80）。要在 Cloudflare 開 Always Use HTTPS，或只對此 hostname 加 Single Redirect（`http://research.tingfong.com/*` → `https://research.tingfong.com/${1}`、301、保留 query string）。
-- **R2 bucket 的 CORS**：PDF 檢視器以 presigned URL 直接向 R2 發 Range GET，bucket 沒有允許 `https://research.tingfong.com` 的 CORS 規則時瀏覽器會攔下（伺服器端零錯誤）。應用的 R2 憑證讀不到也改不了 bucket 設定：到 Cloudflare R2 的 bucket → Settings → CORS Policy，把 [r2-cors-research.json](../r2-cors-research.json) 的規則**加入現有規則**（這個檔是可追加的單一網站規則，不能拿來取代整份 policy，bucket 與辦公室主機共用）。設定後重新取得 presigned URL，驗證 GET／OPTIONS 的 `Access-Control-Allow-Origin`、Range 與 exposed headers。
+- **R2 bucket 的 CORS**（2026-11-19 查證）：已設定。從 EC2 以 presigned URL 實測，OPTIONS 回 204、`Access-Control-Allow-Origin: https://research.tingfong.com`、`Access-Control-Allow-Headers: range`；帶 Range 的 GET 的 `Access-Control-Expose-Headers` 有 `Accept-Ranges`、`Content-Disposition`、`Content-Length`、`Content-Range`、`Content-Type`、`ETag`。實際規則對這個網域另允許 PUT／POST／DELETE，比 [r2-cors-research.json](../r2-cors-research.json)（只有 GET／HEAD）寬。PDF 檢視器以 presigned URL 直接向 R2 發 Range GET，規則被拿掉時瀏覽器會攔下、伺服器端零錯誤。應用的 R2 憑證讀不到也改不了 bucket 設定，改規則要到 Cloudflare R2 的 bucket → Settings → CORS Policy；這個檔是可追加的單一網站規則，不能拿來取代整份 policy（bucket 與辦公室主機共用）。
 - 這個帳號沒有 CloudTrail trail（2026-10-05 `describe-trails` 為空）。
 
 ## 驗收與保護

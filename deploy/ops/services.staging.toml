@@ -7,8 +7,9 @@
 # EC2 與辦公室主機的差別（README「非辦公室主機」、deploy/aws/README.md）：
 # - DB 是 RDS（不是容器）→ 外部依賴 rds，沒有 postgres 容器；主機上沒有任何 Docker workload，所以這裡沒有
 #   container 服務，代理 unit 也不加 docker 群組。
-# - 沒有 NAS：新研報走 SYNC_SOURCE=r2-inbox；不裝 report-mark-backup（RDS 自動備份）、report-mark-linebot-*、
-#   report-mark-metrics、report-mark-backfill。帳號刪除的 tombstone 改寫 EC2 本機磁碟（見下面「帳號刪除」段）。
+# - 沒有 NAS：新研報走 SYNC_SOURCE=r2-inbox；不裝 report-mark-linebot-*、report-mark-metrics、report-mark-backfill。
+#   應用層備份、稽核錨點與帳號刪除的 tombstone 都寫 EC2 本機磁碟 /var/lib/report-mark/backup（見下面「備份與稽核錨定」段），
+#   所以 backup、audit-anchor 依賴 rds，不依賴 nas。
 # - 對外是 Cloudflare 橘雲 A record → EIP:443 → apt 安裝的 nginx（systemd 的 nginx.service）→ web；沒有 cloudflared。
 # - 這裡只列已安裝的 unit：2026-10-02 起的 web、nginx 與 8 組 timer，加上 2026-10-07 部署 Admin v1.5 時裝的
 #   schema-check（`SCHEMA_CHECK_MODE=version`：app 帳號沒有 CREATEDB）。其餘 Admin v1 的 unit（load-observations、
@@ -22,6 +23,9 @@
 # 權限（Admin v1 決策）：restart 只開放 web；run 只給既有白名單裡 EC2 也有、而且沒有副作用疑慮的
 # freshness、audit（兩者都只讀 DB、寫 data/ 的結果檔），以及 Admin v2 的 db-snapshot、analytics-rollup（純 SQL、零 LLM、
 # 無外部費用，理由同 services.prod.toml 的 v2 段）。刻意唯讀：
+# - backup：polkit 的 report-mark-ops-staging 沒有它的 start（tests/test_ops_polkit.py 要求 staging 不比生產寬、也不含 backup）；
+#   要立即備份就在 EC2 上 `sudo systemctl start report-mark-backup.service`。
+# - audit-anchor：理由同 services.prod.toml（run 不收 --verify-only）。
 # - sync：手動多跑一輪就是多一份 LLM 費用；它的鎖檔也還沒在 EC2 驗證過。
 # - r2-reconcile：EC2 與辦公室主機共用同一個 R2 bucket，對帳的 orphan 判讀以 EC2 的 DB 為準，結果容易誤讀。
 # 改了寫入類清單要同步改 deploy/polkit/10-report-mark-ops.rules 的 report-mark-ops-staging（tests/test_ops_polkit.py 對帳）。
@@ -187,8 +191,8 @@ depends_on = ["rds"]
 description = "alembic 版本 drift 每日檢查（05:20；只比版本）"
 
 # ── Admin v2：DB 統計快照、使用分析彙總、安全告警與保留期清除 ──────────────────────
-# 與 services.prod.toml 的 v2 段相同（run 的逐項判斷寫在那裡），只把 postgres 換成 rds。EC2 的差異：沒有應用層 NAS 備份，
-# security-retention 刪的 auth_event 只靠 RDS 自動備份保留；沒有監控收集與事件投影，security-incident 的事件只送 Slack。
+# 與 services.prod.toml 的 v2 段相同（run 的逐項判斷寫在那裡），只把 postgres 換成 rds。EC2 的差異：沒有監控收集與事件投影，
+# security-incident 的事件只送 Slack。
 
 [[services]]
 name = "db-snapshot"
@@ -241,10 +245,34 @@ actions = ["status", "logs"]
 depends_on = ["rds"]
 description = "登入事件與已結束 session 的保留期清除（04:45）"
 
+# ── 備份與稽核錨定 ───────────────────────────────────────────────────────────
+# EC2 沒有 NAS：落點是本機磁碟（/etc/default/report-mark-sync 的 REPORT_MARK_BACKUP_DIR＝/var/lib/report-mark/backup、
+# REPORT_MARK_BACKUP_MOUNT=/、DB_BACKUP_VIA=direct，日備保留 30 份）。RDS 自動備份之外多一份由我們控制的不可重建表備份；
+# 錨點檔不在 RDS 裡，從快照還原不會動到它。設定與還原注意事項見 deploy/aws/README.md「應用層備份與稽核錨定」。
+
+[[services]]
+name = "backup"
+kind = "systemd"
+unit = "report-mark-backup.service"
+timer = "report-mark-backup.timer"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["rds"]
+description = "不可重建表備份 → EC2 本機磁碟 /var/lib/report-mark/backup（03:30；唯讀）"
+
+[[services]]
+name = "audit-anchor"
+kind = "systemd"
+unit = "report-mark-audit-anchor.service"
+timer = "report-mark-audit-anchor.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+depends_on = ["rds"]
+description = "稽核雜湊鏈外部錨定 → EC2 本機磁碟 /var/lib/report-mark/backup（04:15）"
+
 # ── 帳號刪除的執行與重放（2026-10-22 安裝到 EC2）────────────────────────────────
-# EC2 沒有 NAS：tombstone 寫在 EC2 本機磁碟（/etc/default/report-mark-sync 的 REPORT_MARK_BACKUP_DIR＝
-# /var/lib/report-mark/tombstones）。DB 在 RDS，從快照還原不會動到這顆磁碟，所以仍符合「tombstone 不跟 DB 一起被還原」。
-# 唯讀：刪除不可逆，不給 run。
+# tombstone 與備份同一個本機落點（REPORT_MARK_BACKUP_DIR＝/var/lib/report-mark/backup）。DB 在 RDS，從快照還原不會動到
+# 這顆磁碟，所以仍符合「tombstone 不跟 DB 一起被還原」。唯讀：刪除不可逆，不給 run。
 
 [[services]]
 name = "delete-accounts"
