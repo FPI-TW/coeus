@@ -343,5 +343,17 @@ def dataset_arg(profile: str | None, dataset: str | None, default: str = DEFAULT
     if profile is not None and dataset is not None:
         raise EvalProfileError("--profile 與 --dataset 只能擇一：profile 的題集由 profile 決定")
     if profile is None:
-        return default if dataset is None else dataset
+        return require_default_dataset(default) if dataset is None else dataset
     return os.path.relpath(load_profile_dataset(resolve_profile_arg(profile)).path)
+
+
+def require_default_dataset(rel: str = DEFAULT_DATASET_REL) -> str:
+    """不帶 `--profile`／`--dataset` 時的預設題集；這份原始碼沒帶它（交付給其他券商的版本不附）就拋
+    EvalProfileError，說明改帶 `--profile`（profile 的凍結題集）或 `--dataset`，不讓入口以 FileNotFoundError 收場。"""
+    path = Path(rel)
+    if not (path if path.is_absolute() else REPO_ROOT / path).is_file():
+        raise EvalProfileError(
+            f"沒有預設題集 {rel}：帶 --profile <名稱> 用該 profile 的凍結題集"
+            f"（profiles/<名稱>/{EVAL_DIR}/{QUESTIONS_FILE}，以 scripts/draft_eval_questions.py 建立），"
+            "或以 --dataset 指定")
+    return rel

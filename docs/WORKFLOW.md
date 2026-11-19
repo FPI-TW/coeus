@@ -286,6 +286,8 @@ max_reports_per_round = 100   # 每輪最多幾份
 
 每家券商導入時建**自己的**凍結題集，以該客戶的 LLM／judge 量出基準線，過門檻才上線。<!-- export-omit:begin -->廷豐的題集 `eval/ragas_questions.json` 與基準線不搬家、不重做：`profiles/tingfong/eval/eval.toml` 以 `[questions].legacy_repo_path` 指回它，`--profile tingfong` 與不帶 `--profile` 讀到同一份檔、同一個 sha256。<!-- export-omit:end -->
 
+不帶 `--profile`／`--dataset`（`--queryset`）時，評測入口讀 repo 內建的預設題集；這份原始碼沒有內建題集時，入口直接拒絕並說明改帶 `--profile`（`eval/profile_eval.py` 的 `require_default_dataset`，`scripts/retrieval_regression.py`、`scripts/bench_load.py`、`scripts/eval_retrieval.py`、`eval/question_contract.py` 同一套），不以找不到檔案的例外收場。
+
 **profile 的評測檔**（規則在 `eval/profile_eval.py`）：
 
 | 檔案 | 內容 |

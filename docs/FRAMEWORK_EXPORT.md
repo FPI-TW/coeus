@@ -36,7 +36,7 @@ DELIVERY_INFO.json 記 `source_commit`、`source_tree`、`source_commit_date`、
 - 其他路徑：`deploy/EXPORT.toml` 的 `[paths]`。整個目錄同屬一邊的用目錄規則（`app/`、`web/`、`frontend/`、`db/`、`profiles/demo/` 進；`profiles/tingfong/`、`eval/baselines/` 不進），其餘逐檔列：repo 根的檔案、`.github/`、`docs/`、`eval/`、`tests/`。
 - repo 根的授權聲明（LICENSE、LICENSE.md 或 LICENSE.txt）一律進，不必列；沒有就印警告。`--license <檔>` 以那份檔取代，交付物裡命名為 `LICENSE`。授權聲明不做禁用字樣掃描（要寫出著作權人）。
 
-不交付的類別：廷豐的 profile；主機層的 systemd unit、維運代理行程、探針與事件、主機信標、sync 殼、NAS 掛載、對外邊緣、AWS 基礎設施；廷豐主機的現況與維運文件（`docs/DEPLOYMENT_STATUS.md`、`docs/production_resilience.md`、`docs/EXTERNAL_ACCESS.md`、`docs/LINEBOT_ALWAYS_ON.md`、`docs/nas_scheduled_sync_deployment.md`）；廷豐語料量出的評測基準線、抽取 golden set 與檢索前後比較結果；源頭 repo 歷史的 gitleaks 指紋（`.gitleaksignore`）；只驗上述東西的測試；本檔、`deploy/EXPORT.toml`、`deploy/OWNERSHIP.toml` 與打包工具。凍結題集 `eval/ragas_questions.json` 與檢索標註集 `eval/queryset*.json` 只有問句與關鍵字、不含研報內容，作為框架不帶 `--profile` 時的預設題集隨交付物出去。
+不交付的類別：廷豐的 profile；主機層的 systemd unit、維運代理行程、探針與事件、主機信標、sync 殼、NAS 掛載、對外邊緣、AWS 基礎設施；廷豐主機的現況與維運文件（`docs/DEPLOYMENT_STATUS.md`、`docs/production_resilience.md`、`docs/EXTERNAL_ACCESS.md`、`docs/LINEBOT_ALWAYS_ON.md`、`docs/nas_scheduled_sync_deployment.md`）；廷豐語料量出的評測基準線、抽取 golden set 與檢索前後比較結果；源頭 repo 歷史的 gitleaks 指紋（`.gitleaksignore`）；只驗上述東西的測試；本檔、`deploy/EXPORT.toml`、`deploy/OWNERSHIP.toml` 與打包工具。廷豐的凍結題集 `eval/ragas_questions.json` 與檢索標註集 `eval/queryset*.json` 也不交付：交付版的評測入口沒有預設題集，不帶 `--profile`（或 `--dataset`／`--queryset`）就拒絕並說明改帶 profile 的凍結題集；需要題集當素材的測試改用合成的 `tests/fixtures/eval_questions_synthetic.json`（虛構公司、只有問句，形狀與題數照題集契約）。
 
 ## 交付版的改寫
 

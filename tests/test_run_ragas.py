@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# 測試用的合成題集：入口的流程測試不依賴 repo 的預設題集（交付給其他券商的版本不帶它）。
+SYNTHETIC_SET = str(REPO_ROOT / "tests" / "fixtures" / "eval_questions_synthetic.json")
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.services.agentic_qa import AgenticOutcome  # noqa: E402
@@ -399,7 +401,7 @@ class MainAgenticFlagTests(unittest.TestCase):
         argv = sys.argv
         try:
             rr.run = fake_run
-            sys.argv = ["run_ragas.py", "--agentic", "--json"]
+            sys.argv = ["run_ragas.py", "--dataset", SYNTHETIC_SET, "--agentic", "--json"]
             with contextlib.redirect_stdout(io.StringIO()):
                 rr._main()
         finally:
@@ -904,12 +906,12 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         """build_config 產出的 config 必須能通過自己的核對（曾因核對清單要求已不記錄的 judge.retries，
         任何真實基準線都不可比）。"""
         cfg = rr.build_config(
-            dataset_path="eval/ragas_questions.json", generator_model=rr.DEFAULT_MODEL,
+            dataset_path=SYNTHETIC_SET, generator_model=rr.DEFAULT_MODEL,
             judge_model=rr.DEFAULT_JUDGE_MODEL, concurrency=1, repeat=3, rerank_top_m=16, scope=None,
             limit=None, agentic=False, commit="a", started_at="2026-11-10T00:00:00+00:00", corpus_id="snap-1",
         )
         other = rr.build_config(
-            dataset_path="eval/ragas_questions.json", generator_model=rr.DEFAULT_MODEL,
+            dataset_path=SYNTHETIC_SET, generator_model=rr.DEFAULT_MODEL,
             judge_model=rr.DEFAULT_JUDGE_MODEL, concurrency=1, repeat=3, rerank_top_m=16, scope=None,
             limit=None, agentic=False, commit="b", started_at="2026-11-11T00:00:00+00:00", corpus_id="snap-1",
         )
@@ -1023,7 +1025,7 @@ class MainNewFlagsTests(unittest.TestCase):
         old = sys.argv
         try:
             rr.run = fake_run
-            sys.argv = ["run_ragas.py", *argv, "--json"]
+            sys.argv = ["run_ragas.py", "--dataset", SYNTHETIC_SET, *argv, "--json"]
             # 金鑰預檢另有 tests/test_llm_env_loading.py；這裡只記下它被問了哪些模型。
             with contextlib.redirect_stdout(io.StringIO()), mock.patch.object(rr, "require_llm_key") as req:
                 rr._main()
@@ -1060,7 +1062,7 @@ class ProfileQuestionSetTests(unittest.TestCase):
 
     def _config(self, **kw):
         return rr.build_config(
-            dataset_path=REPO_ROOT / "eval" / "ragas_questions.json", generator_model=rr.DEFAULT_MODEL,
+            dataset_path=SYNTHETIC_SET, generator_model=rr.DEFAULT_MODEL,
             judge_model=rr.DEFAULT_JUDGE_MODEL, concurrency=1, repeat=1, rerank_top_m=0, scope=None, limit=None,
             agentic=False, commit=None, started_at="2026-11-10T00:00:00+00:00", **kw,
         )
@@ -1072,9 +1074,9 @@ class ProfileQuestionSetTests(unittest.TestCase):
     def test_cli_default_dataset_is_unchanged(self):
         src = (REPO_ROOT / "eval" / "run_ragas.py").read_text(encoding="utf-8")
         self.assertIn("dataset = dataset_arg(args.profile, args.dataset)", src)
-        from eval.profile_eval import dataset_arg
+        from eval.profile_eval import dataset_arg  # export-omit
 
-        self.assertEqual(dataset_arg(None, None), "eval/ragas_questions.json")
+        self.assertEqual(dataset_arg(None, None), "eval/ragas_questions.json")  # export-omit
 
     def test_profile_and_dataset_together_stop_before_any_llm_call(self):
         argv = ["run_ragas.py", "--profile", "demo", "--dataset", "eval/ragas_questions.json"]

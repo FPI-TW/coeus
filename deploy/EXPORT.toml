@@ -62,10 +62,6 @@ include = [
   "eval/question_draft.py",
   "eval/ragas_metrics.py",
   "eval/run_ragas.py",
-  # 不帶 --profile 時的預設題集與檢索標註集（只有問句與關鍵字，不含研報內容）；各券商的凍結題集放自己的 profile
-  "eval/queryset-entity.json",
-  "eval/queryset.json",
-  "eval/ragas_questions.json",
   # 測試
   "tests/conftest.py",
   "tests/external_fakes.py",
@@ -168,7 +164,6 @@ include = [
   "tests/test_eval_extraction.py",
   "tests/test_eval_gate.py",
   "tests/test_eval_judge.py",
-  "tests/test_eval_question_contract.py",
   "tests/test_eval_question_draft.py",
   "tests/test_eval_readpath.py",
   "tests/test_eval_retrieval.py",
@@ -328,6 +323,7 @@ include = [
   "tests/test_zh_hant.py",
   "tests/test_zh_hant_streaming.py",
   "tests/test_profile_required.py",
+  "tests/fixtures/eval_questions_synthetic.json",
 ]
 
 exclude = [
@@ -346,6 +342,10 @@ exclude = [
   "eval/after.json",
   "eval/before.json",
   "eval/extraction_dataset.json",
+  # 廷豐的凍結題集與檢索標註集（不帶 --profile 時的預設題集）：交付版的入口沒有預設，要帶 --profile 或 --dataset／--queryset
+  "eval/queryset-entity.json",
+  "eval/queryset.json",
+  "eval/ragas_questions.json",
   # 只驗廷豐主機層的測試（unit、探針、事件、維運代理行程、polkit、sync 殼、信標、R2 inbox、主機監控、歸屬清單）
   "tests/test_alert_script.py",
   "tests/test_batch_freshness.py",
@@ -384,6 +384,7 @@ exclude = [
   "tests/test_profile_prompts.py",
   "tests/test_source.py",
   "tests/test_sources_catalog.py",
+  "tests/test_eval_question_contract.py",
 ]
 
 [markers]
@@ -677,6 +678,51 @@ file = "tests/test_business_time.py"
 old = 'for name in ("tingfong", "demo"):'
 new = 'for name in ("demo",):'
 reason = "交付物只帶示範 profile"
+
+[[rewrite]]
+file = "tests/test_eval_gate.py"
+old = 'DEFAULT_SET = REPO_ROOT / "eval" / "ragas_questions.json"'
+new = 'DEFAULT_SET = REPO_ROOT / "tests" / "fixtures" / "eval_questions_synthetic.json"'
+reason = "交付物不帶源頭的預設題集；結果檔的 queryset_sha256 改以測試用的合成題集計算"
+
+[[rewrite]]
+file = "tests/test_retrieval_regression.py"
+old = "DATASET_PATH = rr.DATASET\n"
+new = """DATASET_PATH = REPO_ROOT / "tests" / "fixtures" / "eval_questions_synthetic.json"
+"""
+reason = "檢索回歸的測試素材改用合成題集（交付物不帶源頭的預設題集；題數同為 18）"
+
+[[rewrite]]
+file = "README.md"
+old = "python3 eval/question_contract.py eval/ragas_questions.json  # 零 LLM：驗題集契約並印 sha256"
+new = "python3 eval/question_contract.py --profile <名稱>    # 零 LLM：驗 profile 凍結題集的契約並印 sha256"
+reason = "交付物不帶源頭的預設題集；評測入口一律帶 --profile（程式碼區塊不能用 HTML 註解標記）"
+
+[[rewrite]]
+file = "README.md"
+old = "uv run python eval/run_ragas.py --concurrency 1   # 探索性問答評測"
+new = "uv run python eval/run_ragas.py --profile <名稱> --concurrency 1   # 探索性問答評測"
+reason = "同上"
+
+[[rewrite]]
+file = "README.md"
+old = """  uv run python eval/run_ragas.py --dataset eval/ragas_questions.json --corpus-id "$SNAPSHOT_ID" \\
+    --generator-model gpt-6-luna --judge-model gpt-6-luna --concurrency 1 --repeat 3 --rerank-top-m 16 \\
+    --complete-only"""
+new = """  uv run python eval/run_ragas.py --profile <名稱> --corpus-id "$SNAPSHOT_ID" \\
+    --generator-model gpt-6-luna --judge-model gpt-6-luna --concurrency 1 --repeat 3 --rerank-top-m 16 \\
+    --complete-only"""
+reason = "同上（凍結基準線的指令）"
+
+[[rewrite]]
+file = "README.md"
+old = """  uv run python eval/run_ragas.py --dataset eval/ragas_questions.json --corpus-id "$SNAPSHOT_ID" \\
+    --generator-model gpt-6-luna --judge-model gpt-6-luna --concurrency 1 --repeat 3 --rerank-top-m 16 \\
+    --match-baseline"""
+new = """  uv run python eval/run_ragas.py --profile <名稱> --corpus-id "$SNAPSHOT_ID" \\
+    --generator-model gpt-6-luna --judge-model gpt-6-luna --concurrency 1 --repeat 3 --rerank-top-m 16 \\
+    --match-baseline"""
+reason = "同上（候選結果的指令）"
 
 [verify]
 # 交付物裡不得出現的字樣（不分大小寫；檔名與內容都掃，二進位檔掃位元組）。

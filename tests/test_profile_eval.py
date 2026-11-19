@@ -86,7 +86,7 @@ class TingfongTests(unittest.TestCase):
 
 class DatasetArgTests(unittest.TestCase):
     def test_without_profile_the_dataset_argument_is_passed_through_verbatim(self):
-        self.assertEqual(pe.dataset_arg(None, None), "eval/ragas_questions.json")
+        self.assertEqual(pe.dataset_arg(None, None), "eval/ragas_questions.json")  # export-omit
         self.assertEqual(pe.dataset_arg(None, "x/y.json"), "x/y.json")
 
     def test_profile_and_dataset_are_exclusive(self):
@@ -98,6 +98,14 @@ class DatasetArgTests(unittest.TestCase):
         path = Path(pe.dataset_arg("tingfong", None))
         self.assertEqual(path.resolve(), (REPO_ROOT / "eval" / "ragas_questions.json").resolve())
     # export-omit:end
+
+    def test_missing_default_set_is_a_clear_error(self):
+        """這份原始碼沒帶預設題集時（交付給其他券商的版本），不帶 --profile／--dataset 要說清楚該怎麼做。"""
+        with self.assertRaisesRegex(pe.EvalProfileError, "--profile"):
+            pe.dataset_arg(None, None, default="eval/no-such-set.json")
+        with self.assertRaisesRegex(pe.EvalProfileError, "--dataset"):
+            pe.require_default_dataset("eval/no-such-set.json")
+        self.assertEqual(pe.dataset_arg(None, "x/y.json", default="eval/no-such-set.json"), "x/y.json")
 
     def test_profile_without_a_frozen_set_is_refused(self):
         with tempfile.TemporaryDirectory() as td:
@@ -145,7 +153,7 @@ class EvalConfigTests(unittest.TestCase):
                     pe.load_eval_config(self.profile)
 
     def test_legacy_and_own_set_together_is_ambiguous(self):
-        _write_config(self.profile, '[questions]\nlegacy_repo_path = "eval/ragas_questions.json"\n')
+        _write_config(self.profile, '[questions]\nlegacy_repo_path = "tests/fixtures/eval_questions_synthetic.json"\n')
         (self.profile / "eval" / pe.QUESTIONS_FILE).write_text("{}", encoding="utf-8")
         with self.assertRaisesRegex(pe.EvalProfileError, "不知道要用哪一份"):
             pe.load_eval_config(self.profile)
