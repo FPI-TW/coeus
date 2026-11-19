@@ -694,7 +694,7 @@ class OpenAiFamilyJsonTests(_Case):
 class WhitelistTests(_Case):
     def test_allowed_models_per_provider(self):
         cases = {
-            "openai": ({"LLM_PROVIDER": "openai", "ANTHROPIC_MODELS": "claude-x"}, {"gpt-6-luna", "gpt-6-sol"}),
+            "openai": ({"LLM_PROVIDER": "openai", "ANTHROPIC_MODELS": "claude-x"}, {"gpt-6-luna"}),
             "opencode_go": ({"LLM_PROVIDER": "opencode_go", "OPENAI_COMPATIBLE_MODELS": "qwen"}, {"gpt-6-luna"}),
             "azure_openai": (AZURE_ENV, {"gpt-6-luna", "gpt-4.1"}),
             "anthropic": (ANTHROPIC_ENV, {"claude-sonnet-5-5", "claude-haiku-4-5"}),
@@ -870,13 +870,6 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("LLM_DEFAULT_MODEL=llama-x", err)
 
-    def test_sol_is_rc2_on_go_and_ok_on_openai(self):
-        code, err = self.require(GO_ENV, {"takeaway": "gpt-6-sol"})
-        self.assertEqual(code, 2)
-        self.assertIn("只接受 gpt-6-luna", err)
-        code, err = self.require(OPENAI_ENV, {"takeaway": "gpt-6-sol"})
-        self.assertIsNone(code, err)
-
     def test_reasoning_typo_is_rc2_naming_the_knob(self):
         code, err = self.require({**OPENAI_ENV, "SUMMARY_REASONING": "hgih"}, {"summary": "gpt-6-luna"})
         self.assertEqual(code, 2)
@@ -970,61 +963,8 @@ class HealthTests(_Case):
             self.assertEqual(await llm_health.report(), ("misconfigured", 503))
 
 
-# ── 內建白名單依 provider、Sol 的量尺系譜、每任務推理強度 ─────────────────────────────
+# ── 每任務推理強度 ─────────────────────────────────────────────────────────────
 OPENAI_ENV = {"LLM_PROVIDER": "openai", "OPENAI_API_KEY": KEY, "OPENAI_BASE_URL": ""}
-GO_ENV = {"LLM_PROVIDER": "opencode_go", "OPENCODE_GO_API_KEY": KEY, "OPENCODE_GO_BASE_URL": ""}
-
-
-class BuiltinWhitelistTests(_Case):
-    """`openai` 可送 Luna 與 Sol；`opencode_go` 沒有 Sol，設了 Sol 與其他白名單外名稱同一條路（不會改送 Luna）。"""
-
-    def test_whitelists_differ_only_by_sol(self):
-        self.assertEqual(lm.allowed_models(OPENAI_ENV), frozenset({"gpt-6-luna", "gpt-6-sol"}))
-        self.assertEqual(lm.allowed_models(GO_ENV), frozenset({"gpt-6-luna"}))
-        self.assertTrue(lm.is_http_model("gpt-6-sol", OPENAI_ENV))
-        self.assertFalse(lm.is_http_model("gpt-6-sol", GO_ENV))
-        # 預設表兩條路徑相同
-        env = {k: "" for k in lm.TASK_ENV.values()}
-        self.assertEqual(lm.resolve_all(lm.TASK_ENV, {**env, **OPENAI_ENV}),
-                         lm.resolve_all(lm.TASK_ENV, {**env, **GO_ENV}))
-
-    async def test_sol_on_go_is_config_online_and_rc2_in_batch(self):
-        self.env(GO_ENV)
-        self.handler = lambda r: self.fail("不該送出")
-        with self.assertRaises(llm.LLMUnavailableError) as cm:
-            async for _ in llm.stream_completion("q", model="gpt-6-sol", max_tokens=16, task="ask_answer"):
-                pass
-        self.assertEqual(cm.exception.kind, lh.CONFIG)
-        with self.assertRaises(_claude_cli.LlmEnvironmentError) as cm2:
-            _claude_cli.run_claude("p", "gpt-6-sol", 60, max_tokens=16, meta={"task": "takeaway"})
-        self.assertIn("gpt-6-luna", str(cm2.exception))
-        self.assertEqual(self.requests, [])
-
-    async def test_sol_on_openai_is_sent_with_the_same_shape_as_luna(self):
-        """Sol 的 golden：none 時的請求與 Luna 的錄音只差模型名（golden 檔本身不重錄）。"""
-        self.env({**OPENAI_ENV, "OPENAI_API_KEY": GOLDEN_KEYS["openai"][1]})
-        self.handler = lambda r: _ok_response("openai", r)
-        await asyncio.to_thread(lh.complete_chat, "gpt-6-sol", PROMPT, max_tokens=1024, timeout=60, task="summary",
-                                user_id="batch-summary")
-        expected = dict(GOLDEN["openai"]["batch"])
-        expected["body"] = expected["body"].replace('"model":"gpt-6-luna"', '"model":"gpt-6-sol"')
-        expected["headers"] = {k: v for k, v in expected["headers"].items() if k not in _HTTPX_OWNED}
-        self.assertEqual(_wire(self.requests[0]), expected)
-
-    def test_takeaway_on_sol_is_not_blocked_on_openai(self):
-        """摘錄的錨定白名單守的是預設模型（tests/test_extract_takeaways_sql.py）；設 Sol 不被擋。"""
-        env = {**OPENAI_ENV, "TAKEAWAY_MODEL": "gpt-6-sol"}
-        self.assertEqual(lm.resolve_model("takeaway", env=env), "gpt-6-sol")
-        self.assertTrue(lm.is_http_model("gpt-6-sol", env))
-        self.assertEqual(lm.default_model("takeaway"), "gpt-6-luna")
-
-    def test_sol_has_its_own_judge_lineage(self):
-        self.assertEqual(lm.JUDGE_LINEAGE_SOL, "gpt-6-sol-2026-11")
-        for env in (OPENAI_ENV, GO_ENV, AZURE_ENV):
-            with self.subTest(prov=env["LLM_PROVIDER"]):
-                self.assertEqual(lm.judge_lineage("gpt-6-sol", env), lm.JUDGE_LINEAGE_SOL)
-                self.assertEqual(lm.judge_lineage("gpt-6-luna", env), lm.JUDGE_LINEAGE_LUNA)
-        self.assertEqual(lm.CURRENT_JUDGE_LINEAGES, {lm.JUDGE_LINEAGE_LUNA, lm.JUDGE_LINEAGE_SOL})
 
 
 class ReasoningKnobTests(unittest.TestCase):
@@ -1111,7 +1051,7 @@ class ReasoningRequestTests(_Case):
     async def _answer(self, **kw) -> dict:
         meta: dict = {}
         self.handler = lambda r: _ok_response("openai", r)
-        async for _ in llm.stream_completion("q", model="gpt-6-sol", max_tokens=512, task="ask_answer", meta=meta,
+        async for _ in llm.stream_completion("q", model="gpt-6-luna", max_tokens=512, task="ask_answer", meta=meta,
                                              **kw):
             pass
         return meta
@@ -1170,11 +1110,11 @@ class ReasoningRequestTests(_Case):
             **OPENAI_ENV, "LLM_USAGE_LOG": str(Path(d) / "usage.jsonl"), "SUMMARY_REASONING": "medium",
         }):
             self.handler = lambda r: _ok_response("openai", r)
-            res = _claude_cli.run_claude("p", "gpt-6-sol", 60, max_tokens=1024, meta={"task": "summary"})
+            res = _claude_cli.run_claude("p", "gpt-6-luna", 60, max_tokens=1024, meta={"task": "summary"})
             row = json.loads((Path(d) / "usage.jsonl").read_text(encoding="utf-8").splitlines()[-1])
         self.assertEqual(res.text, "ok")
         body = self.body()
-        self.assertEqual((body["model"], body["reasoning_effort"]), ("gpt-6-sol", "medium"))
+        self.assertEqual((body["model"], body["reasoning_effort"]), ("gpt-6-luna", "medium"))
         self.assertEqual(body["max_completion_tokens"], 1024 + lh.REASONING_TOKEN_BUDGET["medium"])
         self.assertEqual(row["reasoning_effort"], "medium")
 
@@ -1191,7 +1131,7 @@ class ReasoningRequestTests(_Case):
         knobs = {k: "high" for k in lm.TASK_REASONING_ENV.values()}
         self.env({**OPENAI_ENV, **knobs, "FAITHFULNESS_REASONING": "high", "EVAL_JUDGE_REASONING": "high"})
         self.handler = lambda r: _ok_response("openai", r)
-        res = await self.json_call("gpt-6-sol")
+        res = await self.json_call("gpt-6-luna")
         self.assertIsNone(res.kind)
         body = self.body()
         self.assertEqual((body["reasoning_effort"], body["temperature"]), ("none", 0))

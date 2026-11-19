@@ -238,7 +238,7 @@ JUDGE_REASONING_EFFORT = REASONING_NONE
 # OpenAI 族的推理預算（token）：強度不是 none 時加在呼叫端給的上限上。推理 token 算在 `max_completion_tokens` 裡，
 # 不加的話小上限的任務（路由 16、標題 512）會被推理吃光、content 是空的。呼叫端給的上限因此仍是「可見輸出」的上限
 # 語意（推理用得少時可見輸出可以超過它，OpenAI 不分開算）。預算只是上限，不用完不計費。
-# 數值參考 `ANTHROPIC_THINKING_BUDGET` 與官方「推理模型至少預留 25k」的建議；**待使用者確認**（PR 描述逐任務列表）。
+# 數值參考 `ANTHROPIC_THINKING_BUDGET` 與官方「推理模型至少預留 25k」的建議。
 REASONING_TOKEN_BUDGET = {"minimal": 1024, "low": 4096, "medium": 16384, "high": 32768}
 # Anthropic extended thinking 的 budget（token）。官方下限 1024，且必須小於 `max_tokens`（budget 算在 max_tokens 內，
 # 與 OpenAI 的推理 token 算進 `max_completion_tokens` 同一個語意）。

@@ -555,7 +555,7 @@ class GeneratorReasoningCaseTests(unittest.IsolatedAsyncioTestCase):
             rr.stream_completion = stream
             out = await rr.eval_question(
                 {"id": "q1", "question": "x"}, judge=_metrics_judge, embed=_flat_embed,
-                retrieval_params={}, gen_model="gpt-6-sol", gen_reasoning="low",
+                retrieval_params={}, gen_model="gpt-6-luna", gen_reasoning="low",
             )
         finally:
             _restore(saved)
@@ -845,7 +845,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
             saved = _install_fakes(["eval_question"])
             try:
                 rr.eval_question = fake_eval_question
-                report = await rr.run(ds, out_path=None, concurrency=1, generator_model="gpt-6-sol",
+                report = await rr.run(ds, out_path=None, concurrency=1, generator_model="gpt-6-luna",
                                       generator_reasoning="medium")
                 with self.assertRaises(ValueError):
                     await rr.run(ds, out_path=None, generator_reasoning="hgih")
@@ -1106,9 +1106,7 @@ class JudgeProviderTests(unittest.TestCase):
         for model in sorted(HTTP_MODELS):
             with self.subTest(model=model):
                 self.assertEqual(rr.judge_provider(model), "llm_http")
-        # 內建名稱各一把尺：Luna 與 Sol 的系譜不同（eval_compare 的 META 鍵不同＝不可比）
-        self.assertEqual(rr.judge_lineage("gpt-6-luna"), rr.JUDGE_LINEAGE_LUNA)
-        self.assertEqual(rr.judge_lineage("gpt-6-sol"), "gpt-6-sol-2026-11")
+                self.assertEqual(rr.judge_lineage(model), rr.JUDGE_LINEAGE_LUNA)
         # 白名單外沒有 backend（判 unsupported）；系譜函式把它們歸到歷史系譜（讀舊結果檔用）
         self.assertEqual(rr.judge_provider("deepseek-flash"), "unsupported")
         self.assertEqual(rr.judge_lineage("deepseek-flash"), "deepseek-2026-09")

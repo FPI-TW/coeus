@@ -25,22 +25,20 @@
 
 | 值 | 路徑 | 可送的模型 |
 |---|---|---|
-| `openai`（預設；空值＝預設） | OpenAI 官方 Chat Completions | 內建白名單 `HTTP_MODELS`（`gpt-6-luna`、`gpt-6-sol`） |
-| `opencode_go` | 同一顆模型經 OpenCode Go 的 OpenAI 相容端點 | 內建白名單扣掉 `OPENCODE_GO_UNAVAILABLE`（Sol） |
+| `openai`（預設；空值＝預設） | OpenAI 官方 Chat Completions | 內建白名單 `HTTP_MODELS` |
+| `opencode_go` | 同一顆模型經 OpenCode Go 的 OpenAI 相容端點 | 內建白名單 |
 | `azure_openai` | Azure OpenAI 的 deployment 路徑（`api-key`、`api-version`） | `AZURE_OPENAI_DEPLOYMENTS` 宣告的 |
 | `anthropic` | Anthropic 原生 Messages API（`x-api-key`＋`anthropic-version`） | `ANTHROPIC_MODELS` 宣告的 |
 | `openai_compatible` | 自架的 OpenAI 相容端點（vLLM 等） | `OPENAI_COMPATIBLE_MODELS` 宣告的 |
 
-內建的兩條路徑（`openai`、`opencode_go`）預設表與 judge 系譜相同，同一個部署的兩個環境各走一條時，預設的產出與
-量尺因此可以互相代表。白名單不同：Go 沒有 `gpt-6-sol`，`opencode_go` 設了 Sol 與其他白名單外名稱走同一條路（線上
-config 失敗、批次 rc=2），不會改送 Luna。
+內建的兩條路徑（`openai`、`opencode_go`）白名單、預設表、judge 系譜一律相同，同一個部署的兩個環境
+各走一條時，產出與量尺因此可以互相代表。
 後三者的端點、金鑰與模型名都是部署層設定（環境變數，見 `ENDPOINT_ENV`、`DECLARED_MODELS_ENV`），不進 profile。
 
 ## 白名單＝內建＋設定宣告（`allowed_models`）
 
 白名單是**安全閘門**：不在白名單的名稱一律在送出前以 config 失敗，絕不送到付費端點；它沒有旋鈕可以關。
-內建的 `HTTP_MODELS` 只對 `openai`／`opencode_go` 生效（`opencode_go` 另扣掉 `OPENCODE_GO_UNAVAILABLE`；加名稱要發
-PR：換模型要重新評測）。其餘三個 provider
+內建的 `HTTP_MODELS` 只對 `openai`／`opencode_go` 生效（加名稱要發 PR：換模型要重新評測）。其餘三個 provider
 沒有內建名稱，只認**目前 provider** 的宣告旋鈕列出的名稱——宣告別的 provider 的旋鈕不會放行任何名稱。宣告值格式錯
 （`config_problems`）的那一筆不放行（fail-closed），啟動自檢與批次預檢會說出是哪個旋鈕。
 
@@ -79,12 +77,9 @@ logger = logging.getLogger(__name__)
 
 # 內建的模型**明確白名單**（`openai`／`opencode_go` 用；其他 provider 見模組 docstring「白名單」）。不在白名單的
 # 名稱一律是設定錯誤（沒有其他 backend）：打錯的模型名不該被送到付費端點、拿到 400 後被當成帳號錯誤中止整批。
-# 要加新名稱就發 PR——換模型本來就需要重新評測。`HTTP_MODELS` 是 `openai` 的白名單，也是「內建名稱」的全集
-# （judge 系譜據此判定）；`opencode_go` 扣掉 Go 沒有的（`OPENCODE_GO_UNAVAILABLE`）。
+# 要加新名稱就發 PR——換模型本來就需要重新評測。
 DEFAULT_MODEL = "gpt-6-luna"
-SOL_MODEL = "gpt-6-sol"
-HTTP_MODELS = frozenset({DEFAULT_MODEL, SOL_MODEL})
-OPENCODE_GO_UNAVAILABLE = frozenset({SOL_MODEL})
+HTTP_MODELS = frozenset({DEFAULT_MODEL})
 
 
 def is_http_model(model: str | None, env: Mapping[str, str] | None = None) -> bool:
@@ -97,11 +92,6 @@ def is_http_model(model: str | None, env: Mapping[str, str] | None = None) -> bo
 # （`scripts/eval_faithfulness.py`）共用，所以放在這個葉模組。後兩個是歷史系譜：只用來解讀舊的評測結果與
 # `qa_log.evaluation.judge_model`，**永遠不跟著現行預設改**。
 JUDGE_LINEAGE_LUNA = "gpt-6-luna-2026-11"
-JUDGE_LINEAGE_SOL = "gpt-6-sol-2026-11"
-# 內建名稱 → 系譜。每個內建名稱一把尺：Luna 與 Sol 當 judge 量出的分數不可比（eval_compare 的 META 鍵不同＝回 2）。
-BUILTIN_JUDGE_LINEAGE: dict[str, str] = {DEFAULT_MODEL: JUDGE_LINEAGE_LUNA, SOL_MODEL: JUDGE_LINEAGE_SOL}
-# 現行（非歷史）的內建系譜：監控卡與離線彙總據此判斷「剛換尺」。
-CURRENT_JUDGE_LINEAGES = frozenset(BUILTIN_JUDGE_LINEAGE.values())
 JUDGE_LINEAGE_DEEPSEEK_ERA = "deepseek-2026-09"
 JUDGE_LINEAGE_CLAUDE = "claude-haiku"
 
@@ -112,14 +102,12 @@ JUDGE_LINEAGE_DECLARED_PREFIX = "declared:"
 
 
 def judge_lineage(model: str | None, env: Mapping[str, str] | None = None) -> str:
-    """judge 屬於哪個量尺系譜：內建名稱各有現行系譜（`BUILTIN_JUDGE_LINEAGE`），目前 provider 宣告的名稱自成一系，
-    其餘依名稱歸到歷史系譜。
+    """judge 屬於哪個量尺系譜：內建白名單是現行系譜，目前 provider 宣告的名稱自成一系，其餘依名稱歸到歷史系譜。
 
-    內建名稱看 `BUILTIN_JUDGE_LINEAGE` 本身、不看目前 provider：同一顆模型經哪條路徑送達都是同一把尺。
+    內建名稱看 `HTTP_MODELS` 本身、不看目前 provider：同一顆模型經哪條路徑送達都是同一把尺。
     """
-    builtin = BUILTIN_JUDGE_LINEAGE.get(model or "")
-    if builtin is not None:
-        return builtin
+    if model in HTTP_MODELS:
+        return JUDGE_LINEAGE_LUNA
     if model and model in declared_models(env):
         return JUDGE_LINEAGE_DECLARED_PREFIX + model
     return JUDGE_LINEAGE_DEEPSEEK_ERA if (model or "").startswith("deepseek-") else JUDGE_LINEAGE_CLAUDE
@@ -368,12 +356,9 @@ def declared_models(env: Mapping[str, str] | None = None) -> frozenset[str]:
 
 
 def allowed_models(env: Mapping[str, str] | None = None) -> frozenset[str]:
-    """目前 provider 的白名單（模組 docstring「白名單」）：`openai`＝`HTTP_MODELS`，`opencode_go` 扣掉 Go 沒有的。"""
-    prov = provider(env)
-    if prov == PROVIDER_OPENAI:
+    """目前 provider 的白名單（模組 docstring「白名單」）。"""
+    if provider(env) in BUILTIN_MODEL_PROVIDERS:
         return HTTP_MODELS
-    if prov == PROVIDER_OPENCODE_GO:
-        return HTTP_MODELS - OPENCODE_GO_UNAVAILABLE
     return declared_models(env)
 
 

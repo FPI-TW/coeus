@@ -1,8 +1,8 @@
 """統一 LLM 串流客戶端：`llm_http` 是唯一的 backend。
 
-`stream_completion` 只接受目前 provider 白名單內的 model（`llm_models.allowed_models`：`openai` 是內建的 `HTTP_MODELS`、
-`opencode_go` 扣掉 Go 沒有的 Sol，其他 provider 是設定宣告的名稱），依任務解析推理強度（`llm_models.resolve_reasoning`）
-後交給 `llm_http.astream_chat`（首字期限、錯誤 kind、partial，
+`stream_completion` 只接受目前 provider 白名單內的 model（`llm_models.allowed_models`：`openai`／`opencode_go` 是
+內建的 `HTTP_MODELS`，其他 provider 是設定宣告的名稱），依任務解析推理強度（`llm_models.resolve_reasoning`）後交給
+`llm_http.astream_chat`（首字期限、錯誤 kind、partial，
 見 `_stream_http`；各 provider 的差異全在 `llm_http`，這一層的重試與截斷語意與 provider 無關）。其他名稱
 （含 `claude-*`、CLI 別名、打錯字、空字串）一律拋 `LLMUnavailableError(kind="config")`，`allow_web=True` 也是——
 不會被送到付費端點，也沒有備援可以改走。

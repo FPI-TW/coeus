@@ -89,7 +89,6 @@ from app.services.llm_models import (  # noqa: E402
     JUDGE_LINEAGE_CLAUDE,  # noqa: F401 — 以原名重新匯出（tests/test_run_ragas.py）
     JUDGE_LINEAGE_DECLARED_PREFIX,
     JUDGE_LINEAGE_LUNA,
-    JUDGE_LINEAGE_SOL,
     REASONING_EFFORTS,
     REASONING_NONE,
     is_http_model,
@@ -614,11 +613,6 @@ def lineage_notes(model: str) -> list[str]:
         return [
             f"judge 系譜 {lineage}（judge={model}，自 2026-11 起的新量尺）：與舊系譜的結果"
             "（eval/baselines/ 裡 2026-11 之前的基準線）不可比，eval_compare 回 2 是預期；門檻數值不變。"
-        ]
-    if lineage == JUDGE_LINEAGE_SOL:
-        return [
-            f"judge 系譜 {lineage}（judge={model}）：與 {JUDGE_LINEAGE_LUNA}（judge=gpt-6-luna）及舊系譜的結果不可比，"
-            "eval_compare 回 2 是預期；門檻數值不變。"
         ]
     return [f"judge 系譜 {lineage}（judge={model}，舊量尺）：與現行 judge 的結果不可比。"]
 

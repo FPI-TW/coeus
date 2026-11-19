@@ -61,12 +61,10 @@ class LeafModuleTests(unittest.TestCase):
 
 
 class TableTests(unittest.TestCase):
-    def test_builtin_whitelist(self):
-        """所有任務預設同一顆模型；內建白名單是 Luna 與 Sol，Go 沒有 Sol。要加名稱就發 PR（換模型要重新評測）。"""
+    def test_single_model_whitelist(self):
+        """所有任務同一顆模型；白名單只有它，要加名稱就發 PR（換模型要重新評測）。"""
         self.assertEqual(lm.DEFAULT_MODEL, "gpt-6-luna")
-        self.assertEqual(lm.HTTP_MODELS, frozenset({"gpt-6-luna", "gpt-6-sol"}))
-        self.assertEqual(lm.OPENCODE_GO_UNAVAILABLE, frozenset({"gpt-6-sol"}))
-        self.assertEqual(set(lm.BUILTIN_JUDGE_LINEAGE), set(lm.HTTP_MODELS), "每個內建名稱都要有量尺系譜")
+        self.assertEqual(lm.HTTP_MODELS, frozenset({"gpt-6-luna"}))
 
     def test_table_covers_every_task(self):
         self.assertEqual(set(lm.MODEL_DEFAULTS), set(lm.TASK_ENV))

@@ -379,13 +379,6 @@ class TestReasoningKeys(unittest.TestCase):
         self.assertEqual(cmp_.exit_code, 2)
         self.assertTrue(any("judge_reasoning" in r for r in cmp_.incomparable), cmp_.incomparable)
 
-    def test_sol_judge_lineage_is_incomparable_with_luna(self):
-        base = load(self.BASELINE)
-        cand = self._candidate(base, judge_model="gpt-6-sol", judge_lineage="gpt-6-sol-2026-11")
-        cmp_ = compare(base, cand)
-        self.assertEqual(cmp_.exit_code, 2)
-        self.assertTrue(any("judge_lineage" in r for r in cmp_.incomparable), cmp_.incomparable)
-
 
 def _judged_doc(base: dict, *, judge_errors: dict[str, list[str]] | None = None, **cp_override) -> dict:
     """以真實 RAGAS 結果檔為底，模擬 run_ragas 的輸出：指定題目的指定指標 judge 出錯（None＋
