@@ -87,7 +87,7 @@ class EvalQuestionTests(unittest.IsolatedAsyncioTestCase):
             return [_FakeSource()], ctx
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None, reasoning=None):
             for c in ["台積電", "展望", "正向 [1]"]:
                 yield c
 
@@ -197,7 +197,7 @@ class EvalQuestionLatencyTests(unittest.IsolatedAsyncioTestCase):
             return [_FakeSource()], ctx
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None, reasoning=None):
             yield "答案 [1]"
 
         async def slow_judge(system, user):
@@ -257,7 +257,7 @@ class EvalQuestionAgenticTests(unittest.IsolatedAsyncioTestCase):
             )
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None, reasoning=None):
             received["gen_prompt"] = prompt
             yield "答案 [1][2]"
 
@@ -317,7 +317,7 @@ class EvalQuestionAgenticTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("非 agentic 模式不得呼叫 run_agentic")
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None, reasoning=None):
             yield "答案 [1]"
 
         saved = _install_fakes(
@@ -350,7 +350,7 @@ class RunAgenticSerialTests(unittest.IsolatedAsyncioTestCase):
         seen = {"active": 0, "max_active": 0, "agentic": []}
 
         async def fake_eval_question(q, *, judge, embed, retrieval_params, agentic=False,
-                                     gen_model=rr.DEFAULT_MODEL):
+                                     gen_model=rr.DEFAULT_MODEL, gen_reasoning="none"):
             seen["active"] += 1
             seen["max_active"] = max(seen["max_active"], seen["active"])
             seen["agentic"].append(agentic)
@@ -419,7 +419,7 @@ async def _one_ctx_retrieve(question, *, filters=None, **params):
 
 
 async def _cited_stream(prompt, *, system=None, model=None, timeout=120.0,
-                        allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
+                        allow_web=False, retries=2, meta=None, max_tokens=None, task=None, reasoning=None):
     yield "答案 [1]"
 
 
@@ -519,7 +519,7 @@ class JudgeErrorIsPerMetricTests(unittest.IsolatedAsyncioTestCase):
         seen = {}
 
         async def stream(prompt, *, system=None, model=None, timeout=120.0,
-                         allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
+                         allow_web=False, retries=2, meta=None, max_tokens=None, task=None, reasoning=None):
             seen["model"] = model
             seen["timeout"] = timeout
             yield "答案 [1]"
@@ -537,12 +537,81 @@ class JudgeErrorIsPerMetricTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen, {"model": "gpt-6-luna", "timeout": rr.GEN_TIMEOUT})
 
 
+class GeneratorReasoningCaseTests(unittest.IsolatedAsyncioTestCase):
+    """--generator-reasoning 明確傳到 stream_completion；每 case 記生成端的 ttft_ms 與 token 用量。"""
+
+    async def test_reasoning_reaches_stream_completion_and_case_records_ttft_and_tokens(self):
+        seen = {}
+
+        async def stream(prompt, *, system=None, model=None, timeout=120.0,
+                         allow_web=False, retries=2, meta=None, max_tokens=None, task=None, reasoning=None):
+            seen["reasoning"] = reasoning
+            seen["task"] = task
+            yield "答案 [1]"
+            meta.update({"truncated": False, "reasoning_effort": reasoning, "ttft_ms": 321,
+                         "tokens": {"prompt": 900, "completion": 120, "reasoning": 80}})
+
+        saved = _install_fakes(["retrieve_context", "stream_completion"])
+        try:
+            rr.retrieve_context = _one_ctx_retrieve
+            rr.stream_completion = stream
+            out = await rr.eval_question(
+                {"id": "q1", "question": "x"}, judge=_metrics_judge, embed=_flat_embed,
+                retrieval_params={}, gen_model="gpt-6-luna", gen_reasoning="low",
+            )
+        finally:
+            _restore(saved)
+        self.assertEqual(seen, {"reasoning": "low", "task": "eval_answer"})
+        self.assertEqual(out["ttft_ms"], 321)
+        self.assertEqual(out["gen_tokens"], {"prompt": 900, "completion": 120, "reasoning": 80})
+
+    async def test_default_is_explicit_none_not_the_env_knob(self):
+        seen = {}
+
+        async def stream(prompt, *, reasoning=None, **_kw):
+            seen["reasoning"] = reasoning
+            yield "答案 [1]"
+
+        saved = _install_fakes(["retrieve_context", "stream_completion"])
+        try:
+            rr.retrieve_context = _one_ctx_retrieve
+            rr.stream_completion = stream
+            out = await rr.eval_question(
+                {"id": "q1", "question": "x"}, judge=_metrics_judge, embed=_flat_embed, retrieval_params={},
+            )
+        finally:
+            _restore(saved)
+        self.assertEqual(seen["reasoning"], "none")
+        self.assertIsNone(out["ttft_ms"])
+        self.assertIsNone(out["gen_tokens"])
+
+    def test_aggregate_and_merge_carry_ttft_and_tokens(self):
+        merged = rr.merge_repeats([
+            _run(ttft_ms=100, gen_tokens={"prompt": 10, "completion": 4, "reasoning": 1}),
+            _run(ttft_ms=201, gen_tokens={"prompt": 11, "completion": 5, "reasoning": 2}),
+        ])
+        self.assertEqual(merged["ttft_ms"], 150)
+        self.assertEqual(merged["gen_tokens"], {"prompt": 10, "completion": 4, "reasoning": 2})
+        self.assertIsNone(rr.merge_repeats([_run(), _run()])["gen_tokens"])
+        agg = aggregate([
+            _run(id="a", ttft_ms=100, gen_tokens={"prompt": 10, "completion": 4, "reasoning": 0}),
+            _run(id="b", ttft_ms=300, gen_tokens={"prompt": 30, "completion": 6, "reasoning": 10}),
+            _run(id="c", error="x", ttft_ms=9999),
+        ])
+        self.assertEqual((agg["ttft_ms_mean"], agg["ttft_ms_p50"], agg["ttft_ms_p95"]), (200, 100, 300))
+        self.assertEqual((agg["gen_prompt_tokens_mean"], agg["gen_completion_tokens_mean"],
+                          agg["gen_reasoning_tokens_mean"]), (20, 5, 5))
+        empty = aggregate([_run()])
+        self.assertIsNone(empty["ttft_ms_mean"])
+        self.assertIsNone(empty["gen_reasoning_tokens_mean"])
+
+
 class GenerateTruncationTests(unittest.IsolatedAsyncioTestCase):
     """n_truncated 取 stream_completion 回報的截斷訊號，不再用牆鐘推定（含 529 重試會誤判）。"""
 
     async def test_truncation_signal_from_stream_completion(self):
         async def cut(prompt, *, system=None, model=None, timeout=120.0,
-                      allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
+                      allow_web=False, retries=2, meta=None, max_tokens=None, task=None, reasoning=None):
             yield "前半"
             meta["truncated"] = True  # CLI 逾時後對已吐字 fail-open，只留這個記號
 
@@ -558,7 +627,7 @@ class GenerateTruncationTests(unittest.IsolatedAsyncioTestCase):
     async def test_slow_but_complete_is_not_truncated(self):
         """含 529 重試的牆鐘可以超過單次逾時，但只要成功那次沒撞到逾時就不是截斷。"""
         async def slow(prompt, *, system=None, model=None, timeout=120.0,
-                       allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
+                       allow_web=False, retries=2, meta=None, max_tokens=None, task=None, reasoning=None):
             await asyncio.sleep(timeout + 0.02)
             yield "完整答案"
             meta["truncated"] = False
@@ -582,7 +651,7 @@ class GenerateTruncationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_generated_answer_uses_same_citation_filter_as_web(self):
         async def forged(prompt, *, system=None, model=None, timeout=120.0,
-                         allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
+                         allow_web=False, retries=2, meta=None, max_tokens=None, task=None, reasoning=None):
             yield "毛利率 28%[9]，正確來源[1]。"
 
         saved = _install_fakes(["stream_completion"])
@@ -736,7 +805,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         seen = {"gen_model": [], "calls": 0}
 
         async def fake_eval_question(q, *, judge, embed, retrieval_params, agentic=False,
-                                     gen_model=rr.DEFAULT_MODEL):
+                                     gen_model=rr.DEFAULT_MODEL, gen_reasoning="none"):
             seen["gen_model"].append(gen_model)
             seen["calls"] += 1
             return {
@@ -756,6 +825,56 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         finally:
             _restore(saved)
         return report, seen, ds
+
+    async def test_generator_reasoning_is_recorded_and_judge_is_none(self):
+        with tempfile.TemporaryDirectory() as td:
+            report, _seen, _ds = await self._run_with(td)
+        self.assertEqual(report["config"]["gen_reasoning"], "none")
+        self.assertEqual(report["config"]["judge"]["reasoning"], "none")
+        self.assertEqual(report["summary"]["gen_reasoning"], "none")
+        self.assertEqual(report["summary"]["judge_reasoning"], "none")
+        seen = []
+
+        async def fake_eval_question(q, *, gen_reasoning="none", **_kw):
+            seen.append(gen_reasoning)
+            return _run(id=q["id"], question=q["question"])
+
+        with tempfile.TemporaryDirectory() as td:
+            ds = Path(td) / "ds.json"
+            ds.write_text(json.dumps({"version": 2, "generated_at": "2026-09-29T00:00:00+08:00", "count": 1,
+                                      "questions": [{"id": "q001", "question": "台積電營運展望如何", "filters": {},
+                                                     "scope": "corpus_qa"}]}, ensure_ascii=False), encoding="utf-8")
+            saved = _install_fakes(["eval_question"])
+            try:
+                rr.eval_question = fake_eval_question
+                report = await rr.run(ds, out_path=None, concurrency=1, generator_model="gpt-6-luna",
+                                      generator_reasoning="medium")
+                with self.assertRaises(ValueError):
+                    await rr.run(ds, out_path=None, generator_reasoning="hgih")
+            finally:
+                _restore(saved)
+        self.assertEqual(seen, ["medium"])
+        self.assertEqual(report["config"]["gen_reasoning"], "medium")
+        self.assertEqual(report["summary"]["gen_reasoning"], "medium")
+        self.assertEqual(report["summary"]["judge_reasoning"], "none")
+
+    def test_baseline_check_treats_missing_reasoning_as_none(self):
+        with tempfile.TemporaryDirectory() as td:
+            ds = Path(td) / "ds.json"
+            ds.write_text("{}", encoding="utf-8")
+            kw = dict(dataset_path=ds, generator_model="gpt-6-luna", judge_model="gpt-6-luna", concurrency=1,
+                      repeat=1, rerank_top_m=0, scope=None, limit=None, agentic=False, commit=None, started_at="")
+            with mock.patch.object(rr, "get_settings"):
+                current = rr.build_config(**kw)
+                low = rr.build_config(**kw, generator_reasoning="low")
+        old = json.loads(json.dumps(current))
+        old.pop("gen_reasoning")
+        old["judge"].pop("reasoning")
+        baseline = {"config": old}
+        rr.check_baseline_config(baseline, current)  # 舊基準線沒有這兩個鍵＝none，照樣可比
+        with self.assertRaises(ValueError) as cm:
+            rr.check_baseline_config(baseline, low)
+        self.assertIn("gen_reasoning", str(cm.exception))
 
     async def test_summary_carries_the_three_meta_keys(self):
         with tempfile.TemporaryDirectory() as td:

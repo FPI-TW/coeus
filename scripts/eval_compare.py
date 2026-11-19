@@ -39,6 +39,9 @@
   `config.judge.lineage`；還是只有一邊有，而那一邊**不是**宣告模型的系譜時，另一邊視為同系譜——沒有這個鍵的結果
   一律產生於宣告模型上線之前，那時只有內建與歷史系譜，而內建與歷史之間的差異已由 META 鍵 `judge_model` 擋下。
   有記錄的一邊是 `declared:` 系譜時照舊回 2。
+- **推理強度的兩個鍵也可以推得**（同在 `with_lineage`）：`judge_reasoning`（META）與 `gen_reasoning`（INFO）在推理
+  旋鈕加入之後才進 summary，在那之前推理寫死關閉，所以只有一邊有記錄時，另一邊視為 `none`。`gen_reasoning` 是候選的
+  變因（跟換生成模型一樣），只印兩邊、不判可比性；judge 的推理強度不同仍是換尺（回 2）。
 - **latency 用相對容忍值。** 對 45,387 ms 的均值套絕對 0.03 等於「差 0.03 毫秒就是回歸」，
   那種紅燈只會讓人把工具關掉。[0,1] 尺度的指標與計數用絕對值，非 [0,1] 的用相對值。
 
@@ -118,6 +121,14 @@ METRIC_SPECS: dict[str, Spec] = {
     "citation_rate": Spec(HIGHER, ABS, "答案至少引用一個存在來源 [n] 的題數比例"),
     "simplified_residual_rate": Spec(LOWER, ABS, "答案整份被判為簡體（zh_hant.looks_simplified）的題數比例"),
     "n_truncated": Spec(LOWER, ABS, "生成撞到逾時、已吐的字被截斷的題數（stream_completion 回報）"),
+    # 生成端首字時間與每題 token：成本與延遲的描述，只列出、不判方向（推理強度不同時本來就會變，判方向交給人）。
+    "ttft_ms_mean": Spec(INFO, REL, "生成端首個 content 字的毫秒數（平均）"),
+    "ttft_ms_p50": Spec(INFO, REL, "生成端首字毫秒數 p50"),
+    "ttft_ms_p95": Spec(INFO, REL, "生成端首字毫秒數 p95"),
+    "gen_prompt_tokens_mean": Spec(INFO, REL, "生成端每題 prompt token（平均）"),
+    "gen_completion_tokens_mean": Spec(INFO, REL, "生成端每題 completion token（含推理，平均）"),
+    "gen_reasoning_tokens_mean": Spec(INFO, REL, "生成端每題推理 token（平均）"),
+    "gen_reasoning": Spec(INFO, ABS, "生成端推理強度（候選的變因，不判可比性；缺鍵推得 none）"),
     "thresholds_pass": Spec(FLAG, ABS, "run_ragas 的三個絕對門檻是否全過"),
     "thresholds_failed": Spec(INFO, ABS, "未達標項目清單（字串）"),
     # 量尺。judge 換了、提示改了、解讀規則改了，分數就不是同一把尺量的。
@@ -126,6 +137,8 @@ METRIC_SPECS: dict[str, Spec] = {
     "judge_schema_version": Spec(META, ABS, "judge 回應的解讀規則改了＝換了尺"),
     # 宣告模型（`declared:<模型>`）自成一系；較舊的結果沒有這個鍵時由 `with_lineage` 推得（見該函式）。
     "judge_lineage": Spec(META, ABS, "judge 量尺系譜不同＝換了尺（宣告模型自成一系）"),
+    # judge 固定 none；較舊的結果沒有這個鍵時由 `with_lineage` 推得 none。
+    "judge_reasoning": Spec(META, ABS, "judge 推理強度不同＝換了尺"),
     # ── scripts/eval_retrieval.py（檢索）──────────────────────────────────
     "n_cases": Spec(SAMPLE),
     "hit_rate": Spec(HIGHER),
@@ -202,8 +215,13 @@ def recorded_lineage(doc: dict) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+# 推理強度的 summary 鍵；加入之前的結果一律是 none（與 app/services/llm_models.py 的 REASONING_NONE 同值）。
+REASONING_KEYS = ("judge_reasoning", "gen_reasoning")
+REASONING_NONE = "none"
+
+
 def with_lineage(base_doc: dict, cand_doc: dict) -> tuple[dict, dict]:
-    """兩份 summary 的副本，補上可以推得的 judge_lineage（規則見模組 docstring）。只處理 RAGAS 結果。"""
+    """兩份 summary 的副本，補上可以推得的 judge_lineage 與推理強度（規則見模組 docstring）。只處理 RAGAS 結果。"""
     base, cand = dict(base_doc["summary"]), dict(cand_doc["summary"])
     if detect_shape(base) != "ragas" or detect_shape(cand) != "ragas":
         return base, cand
@@ -216,6 +234,10 @@ def with_lineage(base_doc: dict, cand_doc: dict) -> tuple[dict, dict]:
         if not known.startswith(DECLARED_LINEAGE_PREFIX):
             base.setdefault("judge_lineage", known)
             cand.setdefault("judge_lineage", known)
+    for key in REASONING_KEYS:
+        if (key in base) != (key in cand):
+            base.setdefault(key, REASONING_NONE)
+            cand.setdefault(key, REASONING_NONE)
     return base, cand
 
 
