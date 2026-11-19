@@ -254,13 +254,13 @@ aws cloudformation wait stack-update-complete \
 
 ## 已知 drift 與待確認事項
 
-以下是 2026-10-05 留下、之後沒有在 repo 這側重新查證的狀態；動 stack 或 Cloudflare 之前先核對。
+以下除另註查證日期的項目外，是 2026-10-05 留下、之後沒有在 repo 這側重新查證的狀態；動 stack 或 Cloudflare 之前先核對。
 
 - **RDS 備份保留期的 drift**：實際值是 7 天（2026-10-05 以 RDS `ModifyDBInstance` 原地調整，未替換執行個體），repo 的範本也是 7，但當時**已部署的範本仍記錄 1 天**。一般的 UPDATE change set 會把 `Database` 的 `BackupRetentionPeriod` 1 → 7 標成 `Replacement=Conditional`，照上節的規則要停止、不執行。正確做法是建立 drift-aware change set：在上節的 `create-change-set` 加 `--deployment-mode REVERT_DRIFT`，核對完整 actual／previous／desired state；預期只有 `Database` 的保留期對齊與 `Ec2Instance` 的 Metadata 修改（`Replacement=False`，不得動 `ImageId` 或其他 Properties），不得替換 EC2／RDS，也不得修改 IAM 權限。
   參考 [drift-aware change sets](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/drift-aware-change-sets.html)。
 - **drift-aware change set 需要讀 IAM**：`PowerUserAccess` 缺 `iam:GetRole`，計畫會在讀取 EC2 role 時失敗。先由 IAM 管理者把 [staging-state-read-policy.json](staging-state-read-policy.json) 加到部署操作身分（只開放讀取現有的 EC2 role／instance profile，不含 IAM 寫入或 PassRole），重新佈建 SSO permission set 後取得新 session。
 - **HTTP → HTTPS 轉址**：2026-10-05 驗收時 `http://research.tingfong.com/` 回 522（來源站不聽 80）。要在 Cloudflare 開 Always Use HTTPS，或只對此 hostname 加 Single Redirect（`http://research.tingfong.com/*` → `https://research.tingfong.com/${1}`、301、保留 query string）。
-- **R2 bucket 的 CORS**：PDF 檢視器以 presigned URL 直接向 R2 發 Range GET，bucket 沒有允許 `https://research.tingfong.com` 的 CORS 規則時瀏覽器會攔下（伺服器端零錯誤）。應用的 R2 憑證讀不到也改不了 bucket 設定：到 Cloudflare R2 的 bucket → Settings → CORS Policy，把 [r2-cors-research.json](../r2-cors-research.json) 的規則**加入現有規則**（這個檔是可追加的單一網站規則，不能拿來取代整份 policy，bucket 與辦公室主機共用）。設定後重新取得 presigned URL，驗證 GET／OPTIONS 的 `Access-Control-Allow-Origin`、Range 與 exposed headers。
+- **R2 bucket 的 CORS**（2026-11-19 查證）：已設定。從 EC2 以 presigned URL 實測，OPTIONS 回 204、`Access-Control-Allow-Origin: https://research.tingfong.com`、`Access-Control-Allow-Headers: range`；帶 Range 的 GET 的 `Access-Control-Expose-Headers` 有 `Accept-Ranges`、`Content-Disposition`、`Content-Length`、`Content-Range`、`Content-Type`、`ETag`。實際規則對這個網域另允許 PUT／POST／DELETE，比 [r2-cors-research.json](../r2-cors-research.json)（只有 GET／HEAD）寬。PDF 檢視器以 presigned URL 直接向 R2 發 Range GET，規則被拿掉時瀏覽器會攔下、伺服器端零錯誤。應用的 R2 憑證讀不到也改不了 bucket 設定，改規則要到 Cloudflare R2 的 bucket → Settings → CORS Policy；這個檔是可追加的單一網站規則，不能拿來取代整份 policy（bucket 與辦公室主機共用）。
 - 這個帳號沒有 CloudTrail trail（2026-10-05 `describe-trails` 為空）。
 
 ## 驗收與保護
