@@ -125,7 +125,7 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 ## 備份與還原
 
-本節適用 DB 在容器裡的辦公室主機。EC2 沒有應用層備份（只有 RDS 自動備份，見 `deploy/aws/README.md`）與稽核錨點；帳號刪除的 tombstone 在 EC2 寫本機磁碟（見「還原後重放帳號刪除」）。
+本節以 DB 在容器裡、落點在 NAS 的辦公室主機為主。EC2（正式環境）同樣跑備份、稽核錨定與刪帳的執行／重放，但 DB 在 RDS、落點是本機磁碟 `/var/lib/report-mark/backup`（`REPORT_MARK_BACKUP_MOUNT=/`、`DB_BACKUP_VIA=direct`、密碼在 `ubuntu` 的 `~/.pgpass`、日備保留 30 份），還原指令也不同；設定、理由與還原注意事項見 `deploy/aws/README.md`「應用層備份與稽核錨定」。RDS 自動備份另外保留 7 天。
 
 ### 為什麼只備這二十一張表
 
@@ -251,14 +251,14 @@ docker exec -i report-mark-postgres psql -U postgres -c 'DROP DATABASE restore_c
 
 帳號刪除（管理頁提出 → 24 小時撤銷窗口 → `report-mark-delete-accounts.timer` 每小時執行 `scripts/execute_deletions.py`）會刪掉該使用者的 `qa_log`、指向它們的 `review_state`、`user_scope`、`user_session`，`app_user` 只留 UUID。可是**備份是刪除前的樣子**：從任何一份比刪除還舊的備份還原 `qa_log` 或 `app_user`，那個人的問答就復活了，`account_deletion.executed_at` 也一起回到過去，DB 裡沒有任何東西記得他已被刪除（`qa_log.user_id` 刻意沒有 FK）。
 
-所以執行刪除時先在 DB 之外寫一筆 tombstone：`$REPORT_MARK_BACKUP_DIR/account-tombstones.jsonl`（與備份同一個 NAS 落點；一行 `{"user_id", "executed_at"}`，不含帳號名稱）。落點不存在時整批不做（rc=2），不退回本機——與 pgdata 同一塊磁碟的 tombstone 會跟 DB 一起遺失或一起被還原。
+所以執行刪除時先在 DB 之外寫一筆 tombstone：`$REPORT_MARK_BACKUP_DIR/account-tombstones.jsonl`（與備份同一個落點；一行 `{"user_id", "executed_at"}`，不含帳號名稱）。落點不存在時整批不做（rc=2），不退回別的目錄——與 pgdata 同一塊磁碟的 tombstone 會跟 DB 一起遺失或一起被還原。
 
 `scripts/replay_deletions.py` 讀 tombstone，逐一檢查 DB 是否還有該使用者的內容、或 `app_user` 又變回可識別／可登入；有就在同一筆交易重新刪除（稽核 `user.delete_replayed`）並以 **rc=1** 結束（0＝全部乾淨、2＝無法執行：DB 不可用、落點不存在、tombstone 檔壞掉）。
 
 - **每次還原（整組或單表）之後手動跑一次**（上面步驟 3、4 已列）。rc=1 在還原後是預期結果：代表它找到並清掉了復活的資料；再跑一次應該是 rc=0。只想看不想刪用 `--check-only`。
 - 平時由 `report-mark-replay-deletions.timer` 每日 04:30 跑；平常日出現 rc=1（`OnFailure` 告警）表示有人在沒走這份流程的情況下還原過資料，要追查。
 - tombstone 檔本身不要刪、不要手改；它和稽核錨點（`audit-anchors.jsonl`，`report-mark-audit-anchor.timer` 每日 04:15 由 `scripts/audit_anchor.py` 寫入並驗鏈）一樣是 DB 之外唯一的證據。
-- **EC2（正式環境）**：沒有 NAS，`/etc/default/report-mark-sync` 的 `REPORT_MARK_BACKUP_DIR` 指向本機磁碟 `/var/lib/report-mark/tombstones`（`sudo install -d -o ubuntu -g ubuntu -m 0750`）。DB 在 RDS，從快照還原不會動到這顆磁碟，所以仍符合「不跟 DB 一起被還原」；EC2 整台遺失時 tombstone 跟著消失。安裝：`sudo deploy/install_units.sh --user ubuntu --root /home/ubuntu/report-mark report-mark-delete-accounts.timer report-mark-replay-deletions.timer`，再 `enable --now` 兩支 timer；從 RDS 快照還原後一樣要手動跑一次重放。
+- **EC2（正式環境）**：沒有 NAS，`/etc/default/report-mark-sync` 的 `REPORT_MARK_BACKUP_DIR` 指向本機磁碟 `/var/lib/report-mark/backup`（`sudo install -d -o ubuntu -g ubuntu -m 0750`；與備份、稽核錨點同一個目錄）。DB 在 RDS，從快照還原不會動到這顆磁碟，所以仍符合「不跟 DB 一起被還原」；EC2 整台遺失時 tombstone 跟著消失。安裝：`sudo deploy/install_units.sh --user ubuntu --root /home/ubuntu/report-mark report-mark-delete-accounts.timer report-mark-replay-deletions.timer`，再 `enable --now` 兩支 timer；從 RDS 快照還原後一樣要手動跑一次重放。
 
 ### `make ingest-lowio` 的硬閘
 
@@ -1740,7 +1740,7 @@ worker 跑才會發生）。要恢復就重新 `enable --now` timer。長期移�
   同事自己忘了密碼 → 協助重設（不需要做什麼，失敗停了 15 分鐘後自動 RESOLVED）。帳號被針對時考慮請本人改密碼並開 TOTP。
 - `elevate_failures`：已登入的 session 在猜密碼（cookie 外流的典型跡象）。在「安全」頁找出那個 session 撤銷、請本人改密碼。
 - `audit_chain_broken`：疑似有人改了 `admin_audit_log`。**不要**重算或修補；先保全（`pg_dump -t research.admin_audit_log`），
-  `uv run python scripts/audit_anchor.py --verify-only` 看對不上的 id，對照 NAS 上的 `audit-anchors.jsonl` 與備份，照事故處理。
+  `uv run python scripts/audit_anchor.py --verify-only` 看對不上的 id，對照備份落點（辦公室主機的 NAS、EC2 的 `/var/lib/report-mark/backup`）上的 `audit-anchors.jsonl` 與備份，照事故處理。
 
 門檻可依實際分布調（改 `.env` 後重啟 web）。
 
@@ -2139,7 +2139,7 @@ repo 根 `.env`；「覆寫」是各自 DB 裡的 `feature_flag`。
 ### v2 功能的啟用矩陣（測試環境與正式環境）
 
 測試環境＝辦公室主機（`research.kashionzarchive.com`），正式環境＝EC2（`research.tingfong.com`）。結構上的差異：EC2 的 DB 是
-RDS（沒有容器、app 帳號權限較窄）、碰不到 NAS（沒有應用層備份與稽核錨定；tombstone 改寫本機磁碟）、不以容器跑任何東西。EC2 沒裝
+RDS（沒有容器、app 帳號權限較窄）、碰不到 NAS（應用層備份、稽核錨點與 tombstone 都寫本機磁碟 `/var/lib/report-mark/backup`）、不以容器跑任何東西。EC2 沒裝
 哪些 unit 與連帶的後果列在 `README.md`「非辦公室主機（EC2）」，查證日期與現況在 `docs/DEPLOYMENT_STATUS.md`；功能旗標各項的
 上限與覆寫建議另見「功能開關與啟用矩陣」。
 
@@ -2148,9 +2148,9 @@ RDS（沒有容器、app 帳號權限較窄）、碰不到 NAS（沒有應用層
 | schema migration | 依 DB 類型執行 | `make schema CONFIRM=<host:port/db>` | `REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> uv run alembic upgrade head`（RDS） | 一律先於換程式 |
 | 使用量收集（`usage_daily`、`usage_counter`） | 隨 web | 開 | 開 | 不必安裝；只記次數與主題彙總，不記搜尋字串 |
 | 使用分析頁＋`report-mark-analytics-rollup` | 安裝 unit | 安裝 | 安裝 | 沒裝時最近 90 天照常即時顯示，更早的日子是「沒有資料」 |
-| 安全頁（登入事件、session、高風險時間線） | 隨 web | 開 | 開 | 「最後錨定」要有 `report-mark-audit-anchor`（寫 NAS）：EC2 沒有，顯示沒有結果 |
+| 安全頁（登入事件、session、高風險時間線） | 隨 web | 開 | 開 | 「最後錨定」要有 `report-mark-audit-anchor`：兩邊都有（辦公室主機寫 NAS、EC2 寫本機磁碟） |
 | `report-mark-security-health`＋`report-mark-security-incident` | 安裝 unit | 安裝 | 安裝 | 要 P5 已運作、`alert.env` 有 webhook；EC2 沒有事件投影，事件只送 Slack |
-| `report-mark-security-retention` | 安裝 unit | 安裝 | 安裝 | EC2 沒有應用層備份：`auth_event` 只靠 RDS 自動備份 |
+| `report-mark-security-retention` | 安裝 unit | 安裝 | 安裝 | 刪掉的 `auth_event` 只留在之前的應用層備份裡（辦公室主機保留 7 日＋4 週；EC2 30 日＋4 週，另有 RDS 自動備份） |
 | 配額（`QUOTA_ENFORCE`） | 環境變數 | 不設（影子模式） | 不設（影子模式） | 決定額度後先在測試環境驗 429 |
 | 管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`） | 環境變數 | 不設（關） | 不設（關） | 依個人設定開關；開啟前先確認每位管理員都已設定 TOTP |
 | 功能旗標頁與 `/api/features` | 隨 web | 開，不設覆寫 | 開，不設覆寫 | 各旗標的上限見「功能開關與啟用矩陣」 |
@@ -2159,5 +2159,5 @@ RDS（沒有容器、app 帳號權限較窄）、碰不到 NAS（沒有應用層
 | 慢查詢（`pg_stat_statements`） | 獨立維護步驟 | 預載＋重啟容器 | master 帳號 `CREATE EXTENSION`（參數群組已預載） | 不綁版本部署；沒做時頁面只顯示原因 |
 | 主機、排程工作、事件三頁（`service_observation`、`job_execution`、`incident`） | 安裝監控收集與匯入（`report-mark-metrics`、`report-mark-load-observations`） | 安裝 | 不裝 | 收集器讀 docker 的 cgroup；維運代理的服務清單沒有 `load-observations` 時，管理後台不列這三頁 |
 | 研報上傳（`UPLOAD_ENABLED`） | ClamAV＋上傳 worker＋環境變數 | 安裝；收檔（設 1）經同意才開 | 維持 0 | EC2 沒有 ClamAV 與上傳 worker |
-| 帳號刪除的執行與重放 | 安裝 unit＋`REPORT_MARK_BACKUP_DIR` | 安裝（tombstone 寫 NAS） | 安裝（tombstone 寫本機 `/var/lib/report-mark/tombstones`） | EC2 的 DB 在 RDS，快照還原不會動到本機磁碟；EC2 整台遺失時 tombstone 跟著消失 |
+| 帳號刪除的執行與重放 | 安裝 unit＋`REPORT_MARK_BACKUP_DIR` | 安裝（tombstone 寫 NAS） | 安裝（tombstone 寫本機 `/var/lib/report-mark/backup`） | EC2 的 DB 在 RDS，快照還原不會動到本機磁碟；EC2 整台遺失時 tombstone 跟著消失 |
 | ops catalog 與 polkit | 重新安裝 catalog 與規則 | `services.prod.toml` | `services.staging.toml` | 維運代理要已安裝；「立即執行」在 EC2 只給 freshness、audit、db-snapshot、analytics-rollup |
