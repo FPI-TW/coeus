@@ -356,7 +356,7 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
         async def fake_retrieve(question, *, filters=None, **params):
             return [], "[1] 報告：a\n內容"
 
-        async def fake_generate(question, context, *, model):
+        async def fake_generate(question, context, *, model, **_kw):
             return "答 [1]", False
 
         async def judge(system, user):
@@ -379,7 +379,7 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
         async def fake_retrieve(question, *, filters=None, **params):
             return [], "[1] 報告：a\n內容"
 
-        async def fake_generate(question, context, *, model):
+        async def fake_generate(question, context, *, model, **_kw):
             raise LLMUnavailableError(f"API[{kind}] x", kind=kind)
 
         async def judge(system, user):
@@ -414,7 +414,7 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
         async def fake_retrieve(question, *, filters=None, **params):
             return [], "[1] 報告：a\n內容"
 
-        async def fake_generate(question, context, *, model):
+        async def fake_generate(question, context, *, model, **_kw):
             raise LLMUnavailableError("API[quota] 帳戶餘額不足", kind=lh.QUOTA)
 
         with tempfile.TemporaryDirectory() as td:
@@ -488,7 +488,8 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
                 "questions": [{"id": "q001", "question": "台積電營運展望如何", "filters": {}, "scope": "corpus_qa"}],
             }, ensure_ascii=False), encoding="utf-8")
 
-            async def fake_eval_question(q, *, judge, embed, retrieval_params, agentic=False, gen_model=None):
+            async def fake_eval_question(q, *, judge, embed, retrieval_params, agentic=False, gen_model=None,
+                                         gen_reasoning="none"):
                 for system in (RM.DECOMPOSE_SYS, RM.GROUND_SYS, RM.CTX_RELEVANCE_SYS, RM.GENQ_SYS):
                     await judge(system, "u")
                 return {"id": q["id"], "question": q["question"], "faithfulness": 1.0, "context_precision": 1.0,

@@ -29,8 +29,9 @@
 
 `run_claude` 只接受模型白名單（`llm_models.is_http_model`）；其他名稱在送出前拋 `LlmEnvironmentError`。
 
-  - 只送一則 user 訊息、prompt 原樣不動（A/B 只有一個變因）；推理關（`reasoning_effort=none`）由
-    `llm_http.build_body` 負責；`max_tokens` 由每個呼叫點帶（值見第二版 §8，
+  - 只送一則 user 訊息、prompt 原樣不動（A/B 只有一個變因）；推理強度依 `meta["task"]` 讀該任務的旋鈕
+    （`llm_models.resolve_reasoning`，例如 `SUMMARY_REASONING`；未設＝`none`，請求與加入旋鈕之前逐字相同），
+    拼錯拋 `LlmEnvironmentError`（整批 rc=2；入口預檢照理已先擋）；`max_tokens` 由每個呼叫點帶（值見第二版 §8，
     tests/test_claude_cli.py 逐點釘住），沒帶是程式錯誤、直接拋 `ValueError`。
   - `timeout` 沿用各批次現行值，是**涵蓋傳輸層重試的總期限**（`complete_chat`
     以 `time.monotonic()` 逐 chunk 檢查；排隊時的 keep-alive 會一直重置 httpx 的 read 逾時）。
@@ -99,7 +100,7 @@ network）回 None——那不是研報的問題。`timeout_streamed` 兩邊都�
 
 每次送出的呼叫追加一行 JSON 到 `data/llm_usage.jsonl`（ROOT 錨點；`LLM_USAGE_LOG`
 只給測試用）：`ts, task, file_hash, report_id, backend, model_req, model_resp, prompt_sha256,
-tokens{hit,miss,completion,reasoning}, finish_reason, kind, attempts, ttft_ms, total_ms`。
+tokens{hit,miss,completion,reasoning}, finish_reason, kind, attempts, ttft_ms, total_ms, provider, reasoning_effort`。
 摘要、標題、標籤不在 DB 記產出模型，靠這裡的 `file_hash` 回溯；費用真值看供應商後台，這份只拿來
 歸因。規則：
   - `backend` 現在一律是 `http`；舊行有 `cli`（`tokens` 為 null，`kind` 是 `timeout`、
@@ -108,6 +109,7 @@ tokens{hit,miss,completion,reasoning}, finish_reason, kind, attempts, ttft_ms, t
   - 沒收到 usage（失敗在第一個 chunk 之前）時 `tokens` 為 null；收到了但沒有
     `completion_tokens_details` 時 `reasoning` 記 **0**
     ——推理關著（`reasoning_effort=none`），推理 token 就是 0，不是「不知道」。
+  - `reasoning_effort`：這次送出的推理強度（放末尾；舊行沒有這個鍵＝當時一律 none）。
   - 不記 prompt 本身，只記 sha256（研報全文不外流到 log）。
   - 有執行緒鎖（一行一次 write，行不交錯）；寫入失敗 fail-open，只警告一次。
 """
@@ -468,6 +470,7 @@ def record_usage(
     finish_reason: Optional[str] = None,
     attempts: int = 1,
     ttft_ms: Optional[int] = None,
+    reasoning_effort: str = llm_models.REASONING_NONE,
 ) -> None:
     """追加一行用量紀錄；任何失敗都只警告一次、不拋（fail-open）。"""
     global _usage_warned
@@ -489,6 +492,8 @@ def record_usage(
             "total_ms": total_ms,
             # 走哪個供應商（費用歸因：Go 是訂閱額度、OpenAI 是按量計費；欄位放末尾，舊列沒有＝當時的 deepseek）
             "provider": llm_models.provider(),
+            # 推理強度（放末尾；舊列沒有＝當時一律 none）
+            "reasoning_effort": reasoning_effort,
         }
         line = json.dumps(row, ensure_ascii=False, default=str) + "\n"
         path = usage_log_path()
@@ -516,7 +521,8 @@ def run_claude(
     `LlmEnvironmentError`（整批 rc=2）：沒有其他 backend，而入口預檢
     （`scripts/_llm_env.require_llm_key`）照理已先擋下，走到這裡代表 `--model` 之類繞過了預檢。
     `max_tokens` 必填（沒帶拋 `ValueError`）。`meta`：`{"task", "file_hash", "report_id"}`，`task` 標
-    log 與 `user_id`，`file_hash` 參與 400 升級。
+    log、`user_id` 與推理強度（該任務的 `*_REASONING` 旋鈕），`file_hash` 參與 400 升級。
+    推理旋鈕拼錯 → 不送出、拋 `LlmEnvironmentError`（同白名單外的 model）。
     """
     meta = dict(meta or {})
     if not is_http_model(model):
@@ -524,11 +530,16 @@ def run_claude(
             f"model={model!r} 不在模型白名單（{llm_models.allowed_models_label()}），"
             "沒有其他 backend。檢查該批次的模型旋鈕或 --model"
         )
-    return _run_http(prompt, model, timeout, max_tokens, meta)
+    try:
+        effort = llm_models.resolve_reasoning(str(meta.get("task") or "-"))
+    except llm_models.ReasoningConfigError as exc:
+        raise LlmEnvironmentError(f"{exc}。檢查該批次的推理旋鈕") from None
+    return _run_http(prompt, model, timeout, max_tokens, meta, effort)
 
 
 def _run_http(
-    prompt: str, model: str, timeout: float, max_tokens: Optional[int], meta: dict
+    prompt: str, model: str, timeout: float, max_tokens: Optional[int], meta: dict,
+    effort: str = llm_models.REASONING_NONE,
 ) -> CliResult:
     if max_tokens is None:
         raise ValueError(f"model={model} 走 HTTP，呼叫點必須帶 max_tokens（第二版計畫 §8）")
@@ -537,13 +548,14 @@ def _run_http(
     t0 = time.monotonic()
     result = llm_http.complete_chat(
         model, prompt, max_tokens=max_tokens, timeout=float(timeout),
-        task=task, user_id=f"batch-{task}", sleep=_http_sleep,
+        task=task, user_id=f"batch-{task}", sleep=_http_sleep, reasoning_effort=effort,
     )
     out = result.outcome
     record_usage(
         meta=meta, backend="http", model_req=model, prompt=prompt, kind=result.kind,
         total_ms=int((time.monotonic() - t0) * 1000), model_resp=out.model_resp, usage=out.usage,
         finish_reason=out.finish_reason, attempts=result.attempts, ttft_ms=out.ttft_ms,
+        reasoning_effort=effort,
     )
     if result.kind in llm_http.ACCOUNT_KINDS:
         raise LlmEnvironmentError(f"{result.error}。{_ACCOUNT_HINTS[llm_models.provider()][result.kind]}")
