@@ -59,13 +59,9 @@ class TingfongTests(unittest.TestCase):
         self.assertEqual(ds.rel_path, "eval/ragas_questions.json")
         self.assertIsNone(pe.own_questions_path(TINGFONG), "廷豐的題集不搬家，profile 不自帶")
 
-    def test_tingfong_waives_only_cp_with_the_recorded_decision(self):
+    def test_tingfong_has_no_waivers(self):
         cfg = pe.load_eval_config(TINGFONG)
-        self.assertEqual(set(cfg.waivers), {"context_precision"})
-        waiver = cfg.waivers["context_precision"]
-        self.assertEqual(waiver.decided_on, date(2026, 11, 10))
-        self.assertIn("fw-cp", waiver.reason)
-        self.assertIn("被引用的比例", waiver.reason)
+        self.assertEqual(dict(cfg.waivers), {})
         self.assertEqual(cfg.judge_lineage, "gpt-6-luna-2026-11")
 
     def test_profile_arg_resolution(self):
