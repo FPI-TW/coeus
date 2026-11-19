@@ -288,9 +288,13 @@ class SchedulerInventoryTests(unittest.TestCase):
                 self.assertEqual(rows[name], job.cron)
 
 
+# 排程判斷「profile 有沒有自帶凍結題集」要讀 PROFILE_DIR（容器裡一律有設）；指向沒有題集的測試 profile。
+_PROFILE_ENV = {"PROFILE_DIR": "tests/fixtures/profile_framework"}
+
+
 class SchedulerSelectionTests(unittest.TestCase):
     def test_defaults(self):
-        names = [j.name for j in sch.selected_jobs({})]
+        names = [j.name for j in sch.selected_jobs(dict(_PROFILE_ENV))]
         self.assertIn("backup", names)
         self.assertNotIn("retrieval-regression", names)
         self.assertNotIn("r2-reconcile", names)
@@ -304,7 +308,7 @@ class SchedulerSelectionTests(unittest.TestCase):
         self.assertEqual(job.command, ("python", "scripts/backfill_tiers.py", "--tier", "3", "--scheduled"))
 
     def test_enable_and_disable(self):
-        names = [j.name for j in sch.selected_jobs({sch.ENABLE_ENV: "retrieval-regression",
+        names = [j.name for j in sch.selected_jobs({**_PROFILE_ENV, sch.ENABLE_ENV: "retrieval-regression",
                                                      sch.DISABLE_ENV: "backfill, db-audit"})]
         self.assertIn("retrieval-regression", names)
         self.assertNotIn("backfill", names)
@@ -496,8 +500,10 @@ _PW = "fixed-test-secret-" + "dbpw"
 
 
 class MainTests(unittest.TestCase):
+    # compose 一律設 PROFILE_DIR（/app/profile）；這裡指向框架預設的測試 profile，不依賴 repo 的預設 profile。
     ENV = {"REPORT_MARK_DB_URL": f"postgresql+asyncpg://research:{_PW}@postgres:5432/research",
-           "REPORT_MARK_SESSION_SECRET": "fixed-test-secret-" + "b" * 32}
+           "REPORT_MARK_SESSION_SECRET": "fixed-test-secret-" + "b" * 32,
+           "PROFILE_DIR": "tests/fixtures/profile_framework"}
 
     def setUp(self):
         self.execs = []

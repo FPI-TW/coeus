@@ -174,9 +174,14 @@ def load_llm_env() -> None:
 
 def _configure_llm_identity() -> None:
     """送給 LLM 供應商的自報身分取 profile 的 `[institution].website`（LLM 呼叫層是葉模組、不讀 profile）。"""
-    from app.profile import get_profile
+    from app.profile import ProfileError, get_profile
 
-    llm_models.set_identity_url(get_profile().institution.website)
+    try:
+        profile = get_profile()
+    except ProfileError as exc:  # 沒設 PROFILE_DIR（沒有預設時）或 profile 寫錯：拒跑，與 web 的 lifespan 一致
+        print(f"錯誤：{exc}", file=sys.stderr)
+        raise SystemExit(RC_CONFIG) from None
+    llm_models.set_identity_url(profile.institution.website)
 
 
 def _load_llm_env_file() -> None:

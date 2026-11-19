@@ -327,6 +327,7 @@ include = [
   "tests/test_visibility_guard.py",
   "tests/test_zh_hant.py",
   "tests/test_zh_hant_streaming.py",
+  "tests/test_profile_required.py",
 ]
 
 exclude = [
@@ -435,9 +436,11 @@ files = [
 # 交付版的逐字替換：每條的 old 在該檔裡必須恰好出現一次（對不上就拒絕打包）。
 [[rewrite]]
 file = ".env.example"
-old = "# 不設＝profiles/tingfong;"
-new = "# 不設＝profiles/demo（示範 profile）;"
-reason = "交付版的預設 profile（與 app/profile.py 的改寫同值）"
+old = """# (選用)部署 profile 的目錄(機構名、品牌、prompt 稱謂、市場子集;格式見 app/profile.py)。
+# 不設＝profiles/tingfong;"""
+new = """# (必填)部署 profile 的目錄(機構名、品牌、prompt 稱謂、市場子集;格式見 app/profile.py)。
+# 沒設 web 與批次都拒絕啟動（示範 profile 是 profiles/demo）;"""
+reason = "交付版沒有預設 profile，PROFILE_DIR 必填（與 app/profile.py 的改寫一致）"
 
 [[rewrite]]
 file = ".env.example"
@@ -449,7 +452,7 @@ reason = "範例值換成部署方自己的 profile"
 file = "deploy/compose/.env.example"
 old = "PROFILE_HOST_DIR=../../profiles/tingfong"
 new = "PROFILE_HOST_DIR=../../profiles/demo"
-reason = "【必填】的範例值與交付版的預設 profile 一致（部署方換成自己的）"
+reason = "【必填】的範例值換成交付物裡的示範 profile（部署方換成自己的）"
 
 [[rewrite]]
 file = "Makefile"
@@ -460,19 +463,19 @@ reason = "範例的 profile 名稱（交付物沒有源頭的 profile）"
 [[rewrite]]
 file = "app/profile.py"
 old = 'DEFAULT_PROFILE_DIR = "profiles/tingfong"'
-new = 'DEFAULT_PROFILE_DIR = "profiles/demo"'
-reason = "交付物沒有 profiles/tingfong：沒設 PROFILE_DIR 時載入示範 profile（啟得起來、畫面一看就知道還沒換成自己的 profile）"
+new = 'DEFAULT_PROFILE_DIR = ""'
+reason = "交付物沒有 profiles/tingfong，也不替部署方挑預設：空字串＝PROFILE_DIR 必填，沒設就拋 ProfileError（web 的 lifespan、LLM 批次的 load_llm_env、容器 entrypoint 都在第一步載入而拒絕啟動）"
 
 [[rewrite]]
 file = "app/profile.py"
 old = "讀 `PROFILE_DIR`（預設 `profiles/tingfong`，"
-new = "讀 `PROFILE_DIR`（預設 `profiles/demo`，"
+new = "讀 `PROFILE_DIR`（必填、沒有預設，"
 reason = "同上，說明預設值的 docstring"
 
 [[rewrite]]
 file = "eval/profile_eval.py"
 old = 'DEFAULT_PROFILE_DIR = "profiles/tingfong"'
-new = 'DEFAULT_PROFILE_DIR = "profiles/demo"'
+new = 'DEFAULT_PROFILE_DIR = ""'
 reason = "與 app/profile.py 的預設同值（tests/test_profile_eval.py 在源頭 repo 釘住兩者相同）"
 
 [[rewrite]]
@@ -521,8 +524,8 @@ reason = "源頭 repo 的句子指向不交付的主機部署一節"
 [[rewrite]]
 file = "README.md"
 old = "| `PROFILE_DIR` | `profiles/tingfong` |"
-new = "| `PROFILE_DIR` | `profiles/demo` |"
-reason = "交付版的預設 profile"
+new = "| `PROFILE_DIR` | （必填） |"
+reason = "交付版沒有預設 profile：PROFILE_DIR 必填"
 
 [[rewrite]]
 file = "README.md"
@@ -533,8 +536,8 @@ reason = "交付物裡的範例 profile"
 [[rewrite]]
 file = "README.md"
 old = "以 `PROFILE_DIR` 指定，預設 `profiles/tingfong`。"
-new = "以 `PROFILE_DIR` 指定，預設 `profiles/demo`（示範 profile）。"
-reason = "交付版的預設 profile"
+new = "以 `PROFILE_DIR` 指定（必填，沒設就拒絕啟動；示範 profile 是 `profiles/demo`）。"
+reason = "交付版沒有預設 profile：PROFILE_DIR 必填"
 
 [[rewrite]]
 file = "README.md"
@@ -558,7 +561,7 @@ reason = "同上（程式碼區塊）；交付物的 deploy/ 只有框架的容�
 [[rewrite]]
 file = "README.md"
 old = "＋ plugins/（插件連接器）；預設 profiles/tingfong\n"
-new = "＋ plugins/（插件連接器）；預設 profiles/demo（示範 profile）\n"
+new = "＋ plugins/（插件連接器）；PROFILE_DIR 必填（示範：profiles/demo）\n"
 reason = "同上（程式碼區塊）"
 
 [[rewrite]]
@@ -582,13 +585,13 @@ reason = "源頭的句子以機構的用法舉例"
 [[rewrite]]
 file = "docs/ARCHITECTURE.md"
 old = "讀 `PROFILE_DIR`（預設 `profiles/tingfong`）的"
-new = "讀 `PROFILE_DIR`（預設 `profiles/demo`）的"
-reason = "交付版的預設 profile"
+new = "讀 `PROFILE_DIR`（必填、沒有預設）的"
+reason = "交付版沒有預設 profile：PROFILE_DIR 必填"
 
 [[rewrite]]
 file = "docs/ARCHITECTURE.md"
 old = "兩個 profile：`profiles/tingfong`（預設、正式）與 `profiles/demo`（虛構的示範券商）。後者每一項都刻意與廷豐不同"
-new = "示範 profile：`profiles/demo`（虛構的示範券商，沒設 `PROFILE_DIR` 時載入它）。每一項都刻意與框架預設不同"
+new = "示範 profile：`profiles/demo`（虛構的示範券商，`PROFILE_DIR=profiles/demo` 就能起）。每一項都刻意與框架預設不同"
 reason = "交付物只有示範 profile"
 
 [[rewrite]]
@@ -618,8 +621,8 @@ reason = "源頭的句子描述機構主機的 NAS"
 [[rewrite]]
 file = "docs/ARCHITECTURE.md"
 old = "`PROFILE_DIR`（預設 `profiles/tingfong`）刻意不進"
-new = "`PROFILE_DIR`（預設 `profiles/demo`）刻意不進"
-reason = "交付版的預設 profile"
+new = "`PROFILE_DIR`（必填、沒有預設）刻意不進"
+reason = "交付版沒有預設 profile：PROFILE_DIR 必填"
 
 [[rewrite]]
 file = "docs/WORKFLOW.md"

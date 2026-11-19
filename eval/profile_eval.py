@@ -136,9 +136,12 @@ def resolve_profile_arg(spec: str) -> Path:
 
 
 def active_profile_dir(env: Mapping[str, str] | None = None) -> Path:
-    """目前環境的 profile 目錄（`PROFILE_DIR`，規則與 `app.profile.resolve_profile_dir` 相同）。"""
+    """目前環境的 profile 目錄（`PROFILE_DIR`，規則與 `app.profile.resolve_profile_dir` 相同：沒有預設時必填）。"""
     env = os.environ if env is None else env
     value = (env.get(PROFILE_DIR_ENV) or "").strip() or DEFAULT_PROFILE_DIR
+    if not value:
+        raise EvalProfileError(f"沒有設定 {PROFILE_DIR_ENV}：設成部署 profile 的目錄"
+                               f"（例如 {PROFILE_DIR_ENV}=profiles/demo）")
     path = Path(value)
     return path if path.is_absolute() else REPO_ROOT / path
 

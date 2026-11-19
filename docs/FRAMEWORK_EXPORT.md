@@ -52,9 +52,9 @@ DELIVERY_INFO.json 記 `source_commit`、`source_tree`、`source_commit_date`、
 
 | 檔案 | 交付版 |
 |---|---|
-| `app/profile.py`、`eval/profile_eval.py` | `DEFAULT_PROFILE_DIR` 改成 `profiles/demo`：沒設 `PROFILE_DIR` 時載入示範 profile，起得來、畫面一看就知道還沒換成自己的 profile。源頭 repo 照舊預設 `profiles/tingfong`（廷豐主機不設 `PROFILE_DIR`） |
+| `app/profile.py`、`eval/profile_eval.py` | `DEFAULT_PROFILE_DIR` 改成空字串：交付版沒有預設 profile，`PROFILE_DIR` 必填。沒設時 `resolve_profile_dir` 拋 ProfileError，訊息說出要設的變數與要指向的目錄（例如 `profiles/demo`）；web 的 lifespan、LLM 批次與評測入口的 `load_llm_env()`（rc=2）、容器 entrypoint 的每個角色都在第一步載入 profile，因此一律拒絕啟動（`tests/test_profile_required.py` 以清空預設驗同一套行為）。源頭 repo 照舊預設 `profiles/tingfong`（廷豐主機不設 `PROFILE_DIR`） |
 | `tests/conftest.py` | 測試固定用 `tests/fixtures/profile_framework/`：只宣告機構名稱與一份測試用的小發行機構名單，其餘全是框架預設。源頭 repo 的測試釘的是預設 profile 的行為（廷豐的 profile 除了名稱、品牌與名單，宣告的就是框架預設），交付版的預設是示範 profile（每一項都刻意不同），所以改用這份 |
-| `.env.example`、`deploy/compose/.env.example`、文件 | 預設值與範例值換成示範 profile；源頭文件以廷豐舉例的句子換成框架用語 |
+| `.env.example`、`deploy/compose/.env.example`、文件 | `PROFILE_DIR` 標成必填、範例值換成示範 profile；源頭文件以廷豐舉例的句子換成框架用語 |
 
 ## 驗證
 
@@ -63,7 +63,7 @@ DELIVERY_INFO.json 記 `source_commit`、`source_tree`、`source_commit_date`、
 1. 雜湊對帳：`SHA256SUMS` 與實際檔案逐一相符、沒有多也沒有少。
 2. 禁用字樣：`[verify].forbidden`（「廷豐」、tingfong，不分大小寫）不得出現在任何檔名或內容（二進位檔掃位元組）；例外列在 `[verify.allow]`，逐檔釘行數與理由。提示字樣 `[verify].advisory`（源頭的開發者帳號、GitHub 組織、主機的稱呼）只逐檔列出次數、不擋，交付前由人判斷。
 3. `deploy/container/Dockerfile` 的 `COPY` 來源與 compose 檔以相對路徑掛載的主機路徑都在交付物裡。
-4. 預設 profile 載得起來、`web.server` import 得了（不設 `PROFILE_DIR`）。
+4. 沒設 `PROFILE_DIR` 時 web 的 lifespan 拒絕啟動（訊息帶出變數名）；設成 `profiles/demo` 時載得起來、`web.server` import 得了。
 5. `ruff check`。
 6. 交付版自己的 pytest（`tests/*_db.py` 除外；`REPORT_MARK_DB_URL` 一律指向不存在的主機 `db.invalid`，不連任何真實資料庫）。用的是執行打包工具的那個 Python 環境（`uv run` 的 `.venv`），交付物的相依與鎖檔和源頭相同。
 7. `--frontend`：在交付版的 `frontend/` 裡 `npm ci`、typecheck、build、vitest，並讓第 6 步的 SPA 測試對那份 build 驗證（`npm ci` 需要 npm registry 或本機快取）。沒帶時第 6 步設 `SKIP_SPA_TESTS=1`。

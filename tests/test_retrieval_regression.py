@@ -605,7 +605,7 @@ class StaticContractTests(unittest.TestCase):
         from eval import profile_eval as pe
         from eval import question_draft as qd
 
-        self.assertEqual(script.resolve_dataset(None, {}), rr.DATASET)
+        self.assertEqual(script.resolve_dataset(None, {"PROFILE_DIR": "tests/fixtures/profile_framework"}), rr.DATASET)
         self.assertEqual(script.resolve_dataset("tingfong", {}), rr.DATASET.resolve())  # export-omit
         with tempfile.TemporaryDirectory() as td:
             profile = Path(td) / "demo"

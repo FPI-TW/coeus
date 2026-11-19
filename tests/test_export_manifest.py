@@ -42,6 +42,14 @@ def load() -> ex.Manifest:
                              (REPO_ROOT / ex.OWNERSHIP_PATH).read_text(encoding="utf-8"))
 
 
+def _default_profile_dir(source: bytes) -> str:
+    tree = ast.parse(source.decode("utf-8"))
+    values = [n.value.value for n in tree.body if isinstance(n, ast.Assign)
+              and any(getattr(t, "id", None) == "DEFAULT_PROFILE_DIR" for t in n.targets)]
+    assert len(values) == 1
+    return values[0]
+
+
 def delivered(m: ex.Manifest) -> dict[str, bytes]:
     """交付版的內容（套用標記與改寫），以工作樹為準。"""
     out = {}
@@ -120,15 +128,17 @@ class ManifestTests(unittest.TestCase):
         self.assertFalse(unexpected, "交付版出現禁用字樣：改寫成框架用語、加 export-omit 標記或排除\n"
                          + "\n".join(unexpected))
 
-    def test_default_profile_of_the_delivery_is_delivered(self):
-        """交付版 `DEFAULT_PROFILE_DIR` 指到的 profile 真的在交付物裡（不然沒設 PROFILE_DIR 就起不來）。"""
+    def test_delivery_has_no_default_profile(self):
+        """交付版的 `DEFAULT_PROFILE_DIR` 是空字串（PROFILE_DIR 必填）；源頭 repo 的預設照舊是可載入的 profile。"""
         files = delivered(self.m)
         for path in ("app/profile.py", "eval/profile_eval.py"):
-            tree = ast.parse(files[path].decode("utf-8"))
-            values = [n.value.value for n in tree.body if isinstance(n, ast.Assign)
-                      and any(getattr(t, "id", None) == "DEFAULT_PROFILE_DIR" for t in n.targets)]
-            self.assertEqual(len(values), 1, path)
-            self.assertIn(f"{values[0]}/profile.toml", files, f"{path} 的預設 profile 不在交付物裡")
+            with self.subTest(path=path):
+                self.assertEqual(_default_profile_dir(files[path]), "")
+                source = _default_profile_dir((REPO_ROOT / path).read_bytes())
+                self.assertTrue((REPO_ROOT / source / "profile.toml").is_file(), f"{path} 的源頭預設不存在")
+        conftest = files["tests/conftest.py"].decode("utf-8")
+        self.assertIn('os.environ["PROFILE_DIR"] = "tests/fixtures/profile_framework"', conftest)
+        self.assertIn("tests/fixtures/profile_framework/profile.toml", files)
 
     def test_delivered_python_does_not_import_excluded_modules(self):
         files = delivered(self.m)

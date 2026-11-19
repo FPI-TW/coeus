@@ -31,8 +31,9 @@ repo 根的授權聲明（`LICENSE`／`LICENSE.md`／`LICENSE.txt`）一律帶�
 - `<名稱>.tar.gz.sha256`、`<名稱>.receipt.json`（打包時間、tarball 雜湊、驗證結果；不在 tarball 裡）。
 
 驗證（預設做，`--no-verify` 略過）在暫存目錄解開 tarball 後依序：雜湊對帳、禁用字樣掃描（`[verify].forbidden`，
-例外逐檔釘行數；`[verify].advisory` 只列次數不擋）、Dockerfile 的 COPY 來源與 compose 的相對路徑掛載都在、預設
-profile 載得起來、ruff、交付版自己的 pytest（非 DB 測試；`REPORT_MARK_DB_URL` 一律指向不存在的主機）。
+例外逐檔釘行數；`[verify].advisory` 只列次數不擋）、Dockerfile 的 COPY 來源與 compose 的相對路徑掛載都在、
+沒設 PROFILE_DIR 時 web 拒絕啟動、設成示範 profile 載得起來、ruff、交付版自己的 pytest（非 DB 測試；
+`REPORT_MARK_DB_URL` 一律指向不存在的主機）。
 `--frontend` 另在交付版裡 `npm ci`／typecheck／build／vitest，並讓 pytest 的 SPA 測試對那份 build 驗證
 （`npm ci` 需要 npm registry 或本機快取）。`--keep-work` 保留驗證用的暫存目錄。
 
@@ -688,9 +689,16 @@ def verify(tarball: Path, m: Manifest, *, frontend: bool, work: Path, python: st
         spa_built = ok
     env = delivery_env(root, spa_built=spa_built)
 
-    rc, out = _run([python, "-c", "from app.profile import DEFAULT_PROFILE_DIR, get_profile; import web.server; "
-                    "p = get_profile(); print(DEFAULT_PROFILE_DIR, p.root.name)"], root, env, timeout=600)
-    steps.append(Step("預設 profile 與 web 匯入", rc == 0, _tail(out, 15)))
+    # 沒設 PROFILE_DIR：交付版沒有預設 profile，web 的 lifespan 一啟動就拒絕（訊息要說出變數名）。
+    rc, out = _run([python, "-c", "from fastapi.testclient import TestClient; from web.server import app\n"
+                    "with TestClient(app):\n    pass"], root, env, timeout=600)
+    refused = rc != 0 and "PROFILE_DIR" in out and "ProfileError" in out
+    steps.append(Step("沒設 PROFILE_DIR 時 web 拒絕啟動", refused, _tail(out, 3) if refused else _tail(out, 15)))
+    # 設了示範 profile：載得起來、web import 得了。
+    demo_env = {**env, "PROFILE_DIR": "profiles/demo"}
+    rc, out = _run([python, "-c", "from app.profile import get_profile; import web.server; "
+                    "print(get_profile().root.name)"], root, demo_env, timeout=600)
+    steps.append(Step("PROFILE_DIR=profiles/demo 載入與 web 匯入", rc == 0, _tail(out, 15)))
 
     rc, out = _run([python, "-m", "ruff", "check", "--no-cache", "."], root, env, timeout=600)
     steps.append(Step("ruff", rc == 0, _tail(out, 20)))

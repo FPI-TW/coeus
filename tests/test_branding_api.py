@@ -24,7 +24,7 @@ from app.services.tagging import MARKETS  # noqa: E402
 from web.server import app  # noqa: E402
 
 # 預設 profile 的機構名：另一份 profile 的頁面與 prompt 都不得帶出它。
-DEFAULT_NAME = P.load_profile(P.resolve_profile_dir("")).institution.name
+DEFAULT_NAME = P.load_profile(P.resolve_profile_dir()).institution.name
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"acme-logo" * 8
 DARK_PNG = b"\x89PNG\r\n\x1a\n" + b"acme-dark" * 8
