@@ -324,6 +324,9 @@ include = [
   "tests/test_zh_hant_streaming.py",
   "tests/test_profile_required.py",
   "tests/fixtures/eval_questions_synthetic.json",
+  "tests/test_ops_agent.py",
+  "tests/test_ops_agent_actions.py",
+  "tests/test_ops_agent_template.py",
 ]
 
 exclude = [
@@ -346,7 +349,7 @@ exclude = [
   "eval/queryset-entity.json",
   "eval/queryset.json",
   "eval/ragas_questions.json",
-  # 只驗廷豐主機層的測試（unit、探針、事件、維運代理行程、polkit、sync 殼、信標、R2 inbox、主機監控、歸屬清單）
+  # 只驗廷豐主機層的測試（unit、探針、事件、主機的維運代理 unit 與 catalog、polkit、sync 殼、信標、R2 inbox、主機監控、歸屬清單）
   "tests/test_alert_script.py",
   "tests/test_batch_freshness.py",
   "tests/test_clamav_deploy.py",
@@ -359,8 +362,6 @@ exclude = [
   "tests/test_incident_handler.py",
   "tests/test_load_observations.py",
   "tests/test_oneshot_verification.py",
-  "tests/test_ops_agent.py",
-  "tests/test_ops_agent_actions.py",
   "tests/test_ops_agent_units.py",
   "tests/test_ops_polkit.py",
   "tests/test_ownership.py",
@@ -391,6 +392,8 @@ exclude = [
 # 交付版要刪掉的行、區塊或行內片段以 export-omit 註解標記（語法見 docs/FRAMEWORK_EXPORT.md）。
 # 有標記的檔案必須列在這裡、列在這裡的檔案必須有標記，兩邊對帳。
 files = [
+  "tests/test_ops_agent_actions.py",
+  "tests/test_ops_agent.py",
   ".env.example",
   "AGENTS.md",
   "docs/ARCHITECTURE.md",
@@ -548,14 +551,15 @@ reason = "專案結構是程式碼區塊，不能用 HTML 註解標記"
 
 [[rewrite]]
 file = "README.md"
-old = """deploy/                   部署真相來源：container/、compose/、demo/ 是框架的容器部署；其餘是廷豐主機層
+old = """deploy/                   部署真相來源：container/、compose/、demo/ 是框架的容器部署，ops-agent/ 是維運代理的範本；其餘是廷豐主機層
                           （systemd unit、nginx、edge 的 docker-compose…），逐檔歸屬見 OWNERSHIP.toml
                           deploy/ops/：維運代理的 Service Catalog（services.prod.toml＝辦公室主機、
                                        services.staging.toml＝EC2、services.dev.toml＝開發；檔名是歷史命名）
                           deploy/clamav/：上傳掃描的 clamd（獨立 compose 與 conf/）
                           deploy/aws/：EC2／RDS 的 CloudFormation
 """
-new = """deploy/                   容器部署：container/（映像、entrypoint、排程）、compose/（docker compose）、demo/（示範環境）
+new = """deploy/                   容器部署：container/（映像、entrypoint、排程）、compose/（docker compose）、demo/（示範環境）、
+                          ops-agent/（選配的維運代理：unit、catalog 與 polkit 範本、compose override）
 """
 reason = "同上（程式碼區塊）；交付物的 deploy/ 只有框架的容器部署"
 
@@ -565,11 +569,6 @@ old = "＋ plugins/（插件連接器）；預設 profiles/tingfong\n"
 new = "＋ plugins/（插件連接器）；PROFILE_DIR 必填（示範：profiles/demo）\n"
 reason = "同上（程式碼區塊）"
 
-[[rewrite]]
-file = "README.md"
-old = "ops_agent/                維運代理（標準庫、不 import app.*；部署時安裝到 /opt/report-mark-ops）"
-new = "ops_agent/                web 與維運代理共用的協定、catalog 解析與日誌清洗（標準庫；代理的常駐行程不在交付物）"
-reason = "同上（程式碼區塊）；交付物只帶 web 會 import 的模組"
 
 [[rewrite]]
 file = "README.md"
@@ -723,6 +722,24 @@ new = """  uv run python eval/run_ragas.py --profile <名稱> --corpus-id "$SNAP
     --generator-model gpt-6-luna --judge-model gpt-6-luna --concurrency 1 --repeat 3 --rerank-top-m 16 \\
     --match-baseline"""
 reason = "同上（候選結果的指令）"
+
+[[rewrite]]
+file = "tests/test_ops_agent.py"
+old = "from ops_agent.catalog import AgentConfig, Catalog, CatalogError, Service, load_catalog, parse_catalog, validate_binding"
+new = "from ops_agent.catalog import AgentConfig, Catalog, CatalogError, Service, parse_catalog, validate_binding"
+reason = "load_catalog 只給讀源頭主機 catalog 的測試（交付版以標記移除）；容器部署的範本另由 tests/test_ops_agent_template.py 驗"
+
+[[rewrite]]
+file = "tests/test_ops_agent_actions.py"
+old = "from test_ops_agent import FakeRunner, _raw, _req, _uid"
+new = "from test_ops_agent import FakeRunner, _raw, _req"
+reason = "同上：_uid 與 load_catalog 只給讀源頭主機 catalog 的測試"
+
+[[rewrite]]
+file = "tests/test_ops_agent_actions.py"
+old = "from ops_agent.catalog import AgentConfig, Catalog, CatalogError, Service, load_catalog, parse_catalog"
+new = "from ops_agent.catalog import AgentConfig, Catalog, CatalogError, Service, parse_catalog"
+reason = "同上"
 
 [verify]
 # 交付物裡不得出現的字樣（不分大小寫；檔名與內容都掃，二進位檔掃位元組）。

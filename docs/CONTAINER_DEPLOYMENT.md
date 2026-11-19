@@ -18,6 +18,7 @@
 | `deploy/demo/docker-compose.demo.yml` | 示範環境的 override：假 LLM、S3 測試伺服器（moto），並把 LLM 與連接器指過去（見「示範環境」） |
 | `deploy/demo/docker-compose.real-llm.yml` | 疊在示範 override 之後，把 LLM 改回 `.env` 裡的真實設定 |
 | `deploy/demo/fake_llm.py` | 示範與端到端測試用的假 LLM（OpenAI 相容、只用標準函式庫、回應決定性） |
+| `deploy/ops-agent/` | 選配的維運代理（`ops_agent/`）：systemd unit、Service Catalog 範本、polkit 規則範本、讓 web 容器連到代理 socket 的 compose override（見「維運代理（選配）」） |
 
 Dockerfile 放在 `deploy/container/` 而不是 repo 根<!-- export-omit:begin -->：repo 根的 `deploy/docker-compose.yml` 是廷豐測試環境的對外邊緣（nginx＋cloudflared），兩者無關；部署相關的真相來源都在 `deploy/` 底下<!-- export-omit:end -->。`.dockerignore` 必須在 build context 的根，所以在 repo 根。
 
@@ -215,9 +216,34 @@ services:
 
 web 預設只發佈在 `127.0.0.1:8097`（`WEB_PUBLISH`）。對外上傳 API（`POST /external/v1/uploads`）的 body 最大到 `UPLOAD_MAX_BYTES`（預設 25 MiB），代理的 body 上限要比它寬<!-- export-omit:begin -->（`deploy/nginx.conf` 給 `/external/` 30m）<!-- export-omit:end -->，否則超限的請求拿到代理的 HTML 錯誤頁而不是 413 JSON。對外一律經部署方自備的 TLS 反向代理：非 localhost 的明文 HTTP 不會建立登入 session。代理不在同一台主機的 loopback 時，App 看到的來源是 Docker 網路的閘道位址，要把它列進 `REPORT_MARK_TRUSTED_PROXY_CIDRS`，或改用共享祕密 `REPORT_MARK_EDGE_SECRET`（代理注入 `X-Edge-Secret`）<!-- export-omit:begin -->，規則見 `docs/EXTERNAL_ACCESS.md`<!-- export-omit:end -->。對外 API（`/external/v1/*`）要讓代理透傳 `Authorization`。
 
+## 維運代理（選配）
+
+管理後台「維運」的服務狀態、日誌與依賴圖（`/api/admin/ops/*`）來自主機上的維運代理（`ops_agent/`）：一支只用標準函式庫的常駐行程，經 Unix socket `/run/report-mark-ops/agent.sock` 回答 web 的請求，只對 Service Catalog 列出的服務動作。沒裝時這幾頁回 503 `ops_agent_unavailable`，其他功能不受影響。主機、排程工作、事件三頁要靠主機監控的匯入器，容器部署不提供，後台不列。
+
+範本在 `deploy/ops-agent/`：catalog 只列這份 compose 的四個容器（web、postgres、worker、scheduler）、全部唯讀（status、logs），連線只收 web 容器的 UID 10001。容器名是 `<compose 專案名>-<服務>-1`，專案名不是預設的 `report-mark` 時照改。
+
+安裝（在跑 compose 的那台主機上，原始碼目錄的根）：
+
+```bash
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin report-mark-ops   # 同名群組一併建立
+sudo install -d -o root -g root -m 0755 /opt/report-mark-ops
+sudo cp -r ops_agent /opt/report-mark-ops/ && sudo chown -R root:root /opt/report-mark-ops/ops_agent
+sudo install -o root -g root -m 0644 deploy/ops-agent/services.example.toml /opt/report-mark-ops/services.toml
+sudo sh -c 'cd /opt/report-mark-ops && python3 -B -E -s -m ops_agent --catalog services.toml --check'
+sudo install -o root -g root -m 0644 deploy/ops-agent/report-mark-ops-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now report-mark-ops-agent.service
+```
+
+接著讓 web 容器連得到 socket：`deploy/compose/.env` 加 `OPS_AGENT_GID=`（`getent group report-mark-ops` 的 gid），再以 override 重建 web：`docker compose -f docker-compose.yml -f ../ops-agent/docker-compose.ops-agent.yml up -d web`（之後每次 `up` 都要帶這個 override）。驗收：後台「維運 → 服務」列出四個容器與狀態，點進去看得到日誌。
+
+- 程式碼與 catalog 必須在 root 擁有、其他人不可寫的 `/opt/report-mark-ops/`，不從原始碼目錄執行：代理的 unit 帶 docker 群組（等同 root），程式碼可寫就等於交出主機。升級程式版本時重新 `cp` 一次 `ops_agent/` 並重啟代理。
+- 改 catalog 後先 `--check` 再重啟；未知鍵、名稱不合規則、socket 路徑不是該環境的固定路徑一律拒絕載入。
+- 寫入類 action（`restart`、`run`）只給 `kind = "systemd"` 的服務，`restart` 只給 Web 的 unit（`ops_agent/protocol.py` 的 `RESTARTABLE_UNITS`），PostgreSQL、nginx、docker 等一律不可寫。主機上另以 systemd 跑框架批次時才加，並把同一份授權寫進 `deploy/ops-agent/10-report-mark-ops.rules` 後安裝到 `/etc/polkit-1/rules.d/`（`sudo install -o root -g root -m 0644 …`）；範本的 ALLOW 是空的，只列容器時不必裝。
+- 代理停掉不影響服務（unit 刻意不接 `OnFailure`）；狀態看 `systemctl status report-mark-ops-agent` 與 `journalctl -u report-mark-ops-agent`。
+
 ## 監控對接
 
-框架只提供**應用層訊號**，接到部署方自己的監控（Prometheus＋Grafana、Zabbix、ELK 等）：`/metrics`、結構化 JSON 日誌、`/readyz`／`/healthz`、版本對帳與選配的 webhook 告警。<!-- export-omit:begin -->廷豐的維運代理、主機信標、事件處理、探針與 Slack 屬廷豐主機層，框架不需要也不依賴它們。<!-- export-omit:end -->
+框架只提供**應用層訊號**，接到部署方自己的監控（Prometheus＋Grafana、Zabbix、ELK 等）：`/metrics`、結構化 JSON 日誌、`/readyz`／`/healthz`、版本對帳與選配的 webhook 告警。<!-- export-omit:begin -->廷豐主機的維運代理 unit 與 catalog、主機信標、事件處理、探針與 Slack 屬廷豐主機層，框架不需要也不依賴它們。<!-- export-omit:end -->
 
 ### `GET /metrics`
 

@@ -116,7 +116,7 @@ frontend/src/
 scripts/                  批次與維運；呼叫 LLM 的批次取 _claude_lock.py 的 flock
 db/schema.sql（凍結的 baseline）、db/migrations/（Alembic revision，head 0014、0009 留空不用）、
                           db/expected_constraints.txt（約束 golden）
-deploy/                   部署真相來源：container/、compose/、demo/ 是框架的容器部署；其餘是廷豐主機層
+deploy/                   部署真相來源：container/、compose/、demo/ 是框架的容器部署，ops-agent/ 是維運代理的範本；其餘是廷豐主機層
                           （systemd unit、nginx、edge 的 docker-compose…），逐檔歸屬見 OWNERSHIP.toml
                           deploy/ops/：維運代理的 Service Catalog（services.prod.toml＝辦公室主機、
                                        services.staging.toml＝EC2、services.dev.toml＝開發；檔名是歷史命名）
