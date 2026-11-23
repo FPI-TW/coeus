@@ -285,11 +285,14 @@ ASK_RELATIVE_WINDOW_DAYS = _S.ask_relative_window_days
 # 歷史題判斷（is_historical_question）：刻意窄，只認明確的過去時間。漏判的代價只是多放舊研報。
 # 西元年份前後不能緊貼數字、小數點或千分位（擋 20240101 這類檔名與 2,600 這類金額），
 # 後面接金額或數量單位也不算（「2000 億」「1990 元」）。
+# 「以來」不單獨成立：只有前面是早於今年的年份或去年、前年才算（「2023 年以來」「去年以來」），
+# 而這兩種已由年份規則與「去年|前年」命中，所以不另列；「今年以來」「近期以來」「上市以來」不算。
+# 「歷史」排除金融問句常見的「歷史新高／高點／低點／低檔／紀錄／高檔」（講價位，不是問過去）。
 _HISTORICAL_YEAR_RE = re.compile(
     r"(?<![\d.,$])((?:19|20)\d{2})(?!\d|[.,]\d|\s*(?:億|萬|千|百|元|塊|點|%|％|倍|張|股|檔))"
 )
 _HISTORICAL_TERMS_RE = re.compile(
-    r"去年|前年|歷年|歷史|以來|過去\s*(?:\d+|[一二兩三四五六七八九十]+)\s*年"
+    r"去年|前年|歷年|歷史(?!新高|高點|低點|低檔|紀錄|高檔)|過去\s*(?:\d+|[一二兩三四五六七八九十]+)\s*年"
     r"|\blast\s+year\b|\bhistorical|\bsince\s+20\d{2}\b",
     re.IGNORECASE,
 )
@@ -300,7 +303,8 @@ def is_historical_question(question: str, today: date) -> bool:
 
     傳入實際拿去檢索的問題（續問是改寫後的獨立問題）；today 用台北時區的今天。
     只認：早於今年的西元年份（`2024`、`2024 年`）、`去年`、`前年`、`過去 N 年`（阿拉伯或中文數字）、
-    `歷年`、`歷史`、`以來`，英文 `last year`、`historical`、`since 20xx`。
+    `歷年`、`歷史`（不含「歷史新高」這類價位用語）、前面接上述年份的`以來`，
+    英文 `last year`、`historical`、`since 20xx`。
     """
     if _HISTORICAL_TERMS_RE.search(question):
         return True

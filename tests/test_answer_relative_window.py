@@ -51,9 +51,30 @@ class HistoricalQuestionTests(unittest.TestCase):
 
     def test_relative_past_terms(self):
         for q in (
-            "去年毛利率", "前年的配息", "歷年配息", "台積電歷史本益比", "今年以來的漲幅",
+            "去年毛利率", "前年的配息", "歷年配息", "台積電歷史本益比",
             "過去 3 年營收", "過去三年營收", "過去十年", "過去兩年",
         ):
+            with self.subTest(q=q):
+                self.assertTrue(self._hit(q))
+
+    def test_since_only_counts_after_a_past_year(self):
+        """「以來」只有前面緊接早於今年的年份、去年、前年才算。"""
+        for q in ("2023 年以來的營收", "2023年以來", "去年以來的漲幅", "前年以來的配息", "2019 以來"):
+            with self.subTest(q=q):
+                self.assertTrue(self._hit(q))
+        for q in ("今年以來的漲幅", "近期以來的評等變化", "上市以來的表現", "2026 年以來", "以來"):
+            with self.subTest(q=q):
+                self.assertFalse(self._hit(q))
+
+    def test_history_excludes_price_level_phrases(self):
+        """「歷史新高」這類講價位的用語不算；其餘「歷史」照舊算。"""
+        for q in (
+            "台積電股價創歷史新高", "接近歷史高點", "跌到歷史低點", "位在歷史低檔",
+            "營收創歷史紀錄", "處於歷史高檔",
+        ):
+            with self.subTest(q=q):
+                self.assertFalse(self._hit(q))
+        for q in ("台積電歷史本益比", "歷史股利", "歷史營收趨勢", "創歷史新高前的歷史評價"):
             with self.subTest(q=q):
                 self.assertTrue(self._hit(q))
 
