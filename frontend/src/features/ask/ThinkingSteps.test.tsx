@@ -70,7 +70,7 @@ test('完成時沒有進行中或未到的步驟（終局最後一步轉為完�
   expect(screen.getByText('生成回答')).toBeInTheDocument()
   expect(container.querySelectorAll('li[data-state="done"]')).toHaveLength(4)
   expect(container.querySelector('li[data-state="active"], li[data-state="pending"]')).toBeNull()
-  expect(container.querySelector('[class*="spin"]')).toBeNull()
+  expect(container.querySelector('canvas')).toBeNull()
 })
 
 test('連接線只畫在步驟之間，完成的步驟才填色', () => {
@@ -117,7 +117,7 @@ test('重新生成（回到思考中）時重新展開', () => {
 test('失敗：「思考已中斷」，只留已完成的步驟（中斷那一步不算完成）', () => {
   const { container } = render(<ThinkingSteps turn={turn({ phase: 'error', stages: ['understanding', 'retrieved'] })} referenced={0} />)
   expect(screen.getByText('思考已中斷')).toBeInTheDocument()
-  expect(container.querySelector('[class*="spin"]')).toBeNull()
+  expect(container.querySelector('canvas')).toBeNull()
   expect(screen.getByText('理解問題')).toBeInTheDocument()
   expect(screen.queryByText('檢索研報')).toBeNull()
 })
@@ -150,4 +150,33 @@ test('排隊中顯示名次，而不是假裝在思考；排隊期間不計時',
 test('排在第一位不報名次（「第 1 位」只是雜訊）', () => {
   render(<ThinkingSteps turn={turn({ phase: 'thinking', queuePosition: 1 })} referenced={0} />)
   expect(screen.getByText('排隊中…')).toBeInTheDocument()
+})
+
+const orbState = (container: HTMLElement) => container.querySelector('canvas')?.getAttribute('data-orb-state')
+
+test.each([
+  [['understanding'], 'solving'],
+  [['understanding', 'retrieved'], 'searching'],
+  [['understanding', 'retrieved', 'evaluating'], 'weaving'],
+  [['understanding', 'retrieved', 'reading'], 'working'],
+  [['understanding', 'retrieved', 'reading', 'searching_web'], 'connecting'],
+  [['understanding', 'retrieved', 'reading', 'generating'], 'composing'],
+  [[], 'breathing'],
+] as const)('思考中的點陣球跟著目前步驟換動畫：%j → %s', (stages, state) => {
+  const { container } = render(<ThinkingSteps turn={turn({ phase: 'thinking', stages: [...stages], webUsed: (stages as readonly string[]).includes('searching_web') })} referenced={0} />)
+  expect(orbState(container)).toBe(state)
+})
+
+test('點陣球：排隊中是 breathing、寫答案是 composing，且是裝飾（aria-hidden）', () => {
+  const { container, rerender } = render(<ThinkingSteps turn={turn({ phase: 'thinking', queuePosition: 2 })} referenced={0} />)
+  expect(orbState(container)).toBe('breathing')
+  expect(container.querySelector('canvas')).toHaveAttribute('aria-hidden', 'true')
+  rerender(<ThinkingSteps turn={turn({ phase: 'streaming', stages: ['understanding', 'retrieved', 'generating'] })} referenced={0} />)
+  expect(orbState(container)).toBe('composing')
+})
+
+test('停止後不留點陣球，改成停止圖示', () => {
+  const { container } = render(<ThinkingSteps turn={turn({ phase: 'stopped', stages: ['understanding'] })} referenced={0} />)
+  expect(container.querySelector('canvas')).toBeNull()
+  expect(container.querySelector('rect')).toBeTruthy()
 })
