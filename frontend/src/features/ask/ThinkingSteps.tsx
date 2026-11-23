@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
+import { motion } from 'motion/react'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
-import { stagesToSteps, type ThinkStep } from '../../lib/thinkingStages'
-import type { AskStage } from '../../lib/askSchemas'
+import { liveStatus, stagesToSteps, type ThinkStep } from '../../lib/thinkingStages'
 import type { Turn } from '../../lib/askReducer'
 import styles from './ThinkingSteps.module.css'
 import { t } from '@/i18n'
@@ -16,24 +16,14 @@ interface Step extends ThinkStep {
 
 /** 思考中計時：自己掛一個 100ms 的計時器，只重畫這一小段，不讓整則訊息跟著每 0.1 秒重算。
  *  起點是掛載當下：每一次進入「思考中」（含重新生成）都是重新掛載。 */
-function ThinkClock() {
+export function ThinkClock({ className = styles.clock }: { className?: string }) {
   const [start] = useState(() => Date.now())
   const [now, setNow] = useState(start)
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 100)
     return () => window.clearInterval(id)
   }, [])
-  return <span className={styles.clock}>{t('ask.thinkingSteps.s', { v: ((now - start) / 1000).toFixed(1) })}</span>
-}
-
-// 思考中的點陣球（thinking-orbs）：動畫跟著目前步驟換。排隊與還沒抵達任何步驟時是 breathing。
-const ORB_STATE: Record<AskStage, OrbState> = {
-  understanding: 'solving',
-  retrieved: 'searching',
-  evaluating: 'weaving',
-  reading: 'working',
-  searching_web: 'connecting',
-  generating: 'composing',
+  return <span className={className}>{t('ask.thinkingSteps.s', { v: ((now - start) / 1000).toFixed(1) })}</span>
 }
 
 /** theme 固定 light：助理頁沒有暗色模式，auto 會在系統暗色時畫出淺色點。
@@ -55,26 +45,30 @@ interface Props {
   turn: Turn
   /** 目前顯示版本引用的研報篇數（完成後的「參考 N 篇研報」）。 */
   referenced: number
+  /** 標頭點陣球的共享版面 id：思考中的大球縮小飛到這裡（AssistantMessage）。不給就不做過場。 */
+  orbLayoutId?: string
 }
 
 /**
  * 回答上方的思考區（交接包「研究助理／思考區」）。
  *
  * - 思考中：點陣球（隨步驟換動畫）＋目前步驟的流光文字＋計時；寫答案時改成「正在撰寫回答」。
+ *   助理頁的思考中由置中的大球（ThinkingHero）代替，這裡從寫答案開始才出現。
  * - 完成後**不放圖示**，只有「已思考 N 秒」與「參考 N 篇研報」；停止或失敗是灰色停止圖示，
  *   思考還沒完成就被打斷時寫「思考已中斷」（不寫沒發生過的「已思考 0 秒」）。
  * - 步驟清單：完成＝石墨圓勾、進行中＝金色脈動點、未到＝空心圓；連接線從本步圖示下緣接到下一步。
  *   終局（完成、停止、失敗）不留空心圓：殘留的未到步驟會讀成「還在等」。
  */
-export function ThinkingSteps({ turn, referenced }: Props) {
+export function ThinkingSteps({ turn, referenced, orbLayoutId }: Props) {
   const live = turn.phase === 'thinking' || turn.phase === 'streaming'
   const queued = live && turn.queuePosition !== null
   // 思考完成之前就結束（失敗，或停止時 thinkingMs 還沒量到）：最後一格沒有做完，不能標成完成。
   const halted = turn.phase === 'error' || (turn.phase === 'stopped' && turn.thinkingMs == null)
 
   // 展開狀態：思考中預設展開，寫答案後自動收合，失敗時收合；歷史紀錄掛載時就是收合。
+  // 從寫答案才掛載（思考中是大球）也是收合：思考時沒看過清單，不做先展開再收起。
   // 依 phase 的轉變調整，用「render 中比對前值」而不是 effect——前值要確實拿到（交接包坑 5）。
-  const [open, setOpen] = useState(live)
+  const [open, setOpen] = useState(turn.phase === 'thinking')
   const [prevPhase, setPrevPhase] = useState(turn.phase)
   if (prevPhase !== turn.phase) {
     setPrevPhase(turn.phase)
@@ -101,31 +95,24 @@ export function ThinkingSteps({ turn, referenced }: Props) {
   // 終局過濾後也可能一步不剩，只看 stages 會留下沒有內容的收合箭頭。
   const hasSteps = turn.stages.length > 0 && steps.length > 0
 
-  const active = steps.find(s => s.state === 'active')
+  const status = live ? liveStatus(turn) : null
   let label: string
   let sub: string | null = null
-  if (queued) {
-    // 後端在取得併發名額前先送 queued（web/concurrency.py）；排第一位不報名次，那只是雜訊。
-    const pos = turn.queuePosition ?? 0
-    label = pos > 1 ? t('ask.thinkingSteps.queuedPosition', { pos }) : t('ask.thinkingSteps.queued')
-  } else if (turn.phase === 'thinking') {
-    label = active ? `${active.name}…` : t('ask.thinkingSteps.thinking')
-  } else if (turn.phase === 'streaming') {
-    label = t('ask.thinkingSteps.writingTheAnswer')
+  if (status) {
+    label = status.label
   } else if (halted) {
     label = t('ask.thinkingSteps.thinkingInterrupted')
   } else {
     label = turn.thinkingMs != null ? t('ask.thinkingSteps.thoughtForS', { max: Math.max(1, Math.round(turn.thinkingMs / 1000)) }) : t('ask.thinkingSteps.doneThinking')
     if (referenced > 0) sub = t('ask.thinkingSteps.referencedReports', { referenced })
   }
-  const orbState: OrbState = queued
-    ? 'breathing'
-    : turn.phase === 'streaming' ? 'composing' : active ? ORB_STATE[active.key] : 'breathing'
-  const icon = live ? <Orb state={orbState} /> : turn.phase === 'stopped' || turn.phase === 'error' ? <HaltIcon /> : null
+  const icon = status ? <Orb state={status.orb} /> : turn.phase === 'stopped' || turn.phase === 'error' ? <HaltIcon /> : null
 
   const headContent = (
     <>
-      {icon && <span className={styles.icon}>{icon}</span>}
+      {icon && (status && orbLayoutId
+        ? <motion.span layoutId={orbLayoutId} className={styles.icon}>{icon}</motion.span>
+        : <span className={styles.icon}>{icon}</span>)}
       <span className={`${styles.label} ${live ? styles.shimmer : ''}`}>{label}</span>
       {sub && <span className={styles.sub}>{sub}</span>}
       {turn.phase === 'thinking' && !queued && <ThinkClock />}

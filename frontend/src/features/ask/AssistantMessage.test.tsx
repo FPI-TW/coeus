@@ -249,3 +249,11 @@ test('複製回答：只複製本文，不附來源清單', async () => {
   expect(spy).toHaveBeenCalledWith('展望正向 [1]。')
   spy.mockRestore()
 })
+
+test('思考中不畫思考區標頭（由置中大球代替），開始寫答案才出現', () => {
+  const { rerender } = render(<AssistantMessage turn={makeTurn({ phase: 'thinking', stages: ['understanding', 'retrieved'], answer: '' })} {...noop} />)
+  expect(screen.queryByText('檢索研報…')).toBeNull()
+  expect(screen.queryByRole('button', { expanded: true })).toBeNull()
+  rerender(<AssistantMessage turn={makeTurn({ phase: 'streaming', stages: ['understanding', 'retrieved', 'generating'], answer: '' })} {...noop} />)
+  expect(screen.getByText('正在撰寫回答')).toBeInTheDocument()
+})

@@ -180,3 +180,8 @@ test('停止後不留點陣球，改成停止圖示', () => {
   expect(container.querySelector('canvas')).toBeNull()
   expect(container.querySelector('rect')).toBeTruthy()
 })
+
+test('從寫答案才掛載（思考中是大球）：步驟清單一開始就收合', () => {
+  render(<ThinkingSteps turn={turn({ phase: 'streaming', stages: ['understanding', 'retrieved', 'generating'] })} referenced={0} />)
+  expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'false')
+})
