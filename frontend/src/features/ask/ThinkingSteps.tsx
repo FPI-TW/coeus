@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
+import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import { stagesToSteps, type ThinkStep } from '../../lib/thinkingStages'
+import type { AskStage } from '../../lib/askSchemas'
 import type { Turn } from '../../lib/askReducer'
 import styles from './ThinkingSteps.module.css'
 import { t } from '@/i18n'
@@ -24,13 +26,20 @@ function ThinkClock() {
   return <span className={styles.clock}>{t('ask.thinkingSteps.s', { v: ((now - start) / 1000).toFixed(1) })}</span>
 }
 
-function SpinArc() {
-  return (
-    <svg className={styles.spin} width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle className={styles.arcTrack} cx="12" cy="12" r="9" strokeWidth="2.4" />
-      <path className={styles.arc} d="M21 12a9 9 0 0 0-9-9" strokeWidth="2.4" strokeLinecap="round" />
-    </svg>
-  )
+// 思考中的點陣球（thinking-orbs）：動畫跟著目前步驟換。排隊與還沒抵達任何步驟時是 breathing。
+const ORB_STATE: Record<AskStage, OrbState> = {
+  understanding: 'solving',
+  retrieved: 'searching',
+  evaluating: 'weaving',
+  reading: 'working',
+  searching_web: 'connecting',
+  generating: 'composing',
+}
+
+/** theme 固定 light：助理頁沒有暗色模式，auto 會在系統暗色時畫出淺色點。
+ *  標頭文字已經念出目前步驟，orb 只是裝飾，所以 aria-hidden。 */
+function Orb({ state }: { state: OrbState }) {
+  return <ThinkingOrb state={state} size={20} theme="light" aria-hidden="true" data-orb-state={state} />
 }
 
 function HaltIcon() {
@@ -51,7 +60,7 @@ interface Props {
 /**
  * 回答上方的思考區（交接包「研究助理／思考區」）。
  *
- * - 思考中：金色旋轉弧線＋目前步驟的流光文字＋計時；寫答案時改成「正在撰寫回答」。
+ * - 思考中：點陣球（隨步驟換動畫）＋目前步驟的流光文字＋計時；寫答案時改成「正在撰寫回答」。
  * - 完成後**不放圖示**，只有「已思考 N 秒」與「參考 N 篇研報」；停止或失敗是灰色停止圖示，
  *   思考還沒完成就被打斷時寫「思考已中斷」（不寫沒發生過的「已思考 0 秒」）。
  * - 步驟清單：完成＝石墨圓勾、進行中＝金色脈動點、未到＝空心圓；連接線從本步圖示下緣接到下一步。
@@ -109,7 +118,10 @@ export function ThinkingSteps({ turn, referenced }: Props) {
     label = turn.thinkingMs != null ? t('ask.thinkingSteps.thoughtForS', { max: Math.max(1, Math.round(turn.thinkingMs / 1000)) }) : t('ask.thinkingSteps.doneThinking')
     if (referenced > 0) sub = t('ask.thinkingSteps.referencedReports', { referenced })
   }
-  const icon = live ? <SpinArc /> : turn.phase === 'stopped' || turn.phase === 'error' ? <HaltIcon /> : null
+  const orbState: OrbState = queued
+    ? 'breathing'
+    : turn.phase === 'streaming' ? 'composing' : active ? ORB_STATE[active.key] : 'breathing'
+  const icon = live ? <Orb state={orbState} /> : turn.phase === 'stopped' || turn.phase === 'error' ? <HaltIcon /> : null
 
   const headContent = (
     <>
