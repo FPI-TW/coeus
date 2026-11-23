@@ -19,7 +19,10 @@ import { ApiError } from './api'
 import { getConversation, stopAsk } from './askApi'
 import { useAskController } from './useAskController'
 
-afterEach(() => vi.clearAllMocks())
+afterEach(() => {
+  vi.clearAllMocks()
+  sessionStorage.clear()
+})
 
 function withQueryClient() {
   const client = new QueryClient({
@@ -269,6 +272,40 @@ test('重整或關頁（pagehide）時還沒跑完的新提問：以 keepalive �
   await waitFor(() => expect(result.current.state.turns[0].answer).toBe('半句'))
   window.dispatchEvent(new Event('pagehide'))
   expect(stopAsk).toHaveBeenCalledWith(expect.objectContaining({ question: 'Q', partial_answer: '半句' }), { keepalive: true })
+})
+
+test('既有對話裡追問、等回答時重整：重整後先補送停止、落庫之後才載入對話，那一題不會消失', async () => {
+  // 重整前：載入舊對話 c1，追問 Q2 還在思考中就重整。
+  vi.mocked(getConversation).mockResolvedValueOnce([])
+  const g = gated([{ event: 'token', data: '沒送到' }])
+  streamAsk.mockReturnValue(g.gen)
+  const before = renderHook(() => useAskController(), { wrapper: withQueryClient().wrapper })
+  await act(async () => { await before.result.current.loadConversation('c1') })
+  act(() => before.result.current.submit('Q2'))
+  window.dispatchEvent(new Event('pagehide'))
+  const kept = vi.mocked(stopAsk).mock.calls[0][0]
+  expect(kept).toMatchObject({ question: 'Q2', conversation_id: 'c1', partial_answer: '' })
+  before.unmount()
+  vi.mocked(stopAsk).mockClear()
+  vi.mocked(getConversation).mockClear()
+
+  // 重整後：keepalive 那一次還沒到後端。補送的停止回來之前不能抓對話。
+  let landStop!: () => void
+  vi.mocked(stopAsk).mockImplementationOnce(() => new Promise(res => { landStop = () => res({ qa_id: 'qa-stop' }) }))
+  vi.mocked(getConversation).mockResolvedValueOnce([])
+  const after = renderHook(() => useAskController(), { wrapper: withQueryClient().wrapper })
+  let loading!: Promise<void>
+  act(() => { loading = after.result.current.loadConversation('c1') })
+  await waitFor(() => expect(stopAsk).toHaveBeenCalledTimes(1))
+  // 同一份 request_id：後端唯一索引把它與 keepalive 那一次收斂成同一列。
+  expect(vi.mocked(stopAsk).mock.calls[0]).toEqual([kept])
+  expect(getConversation).not.toHaveBeenCalled()
+  await act(async () => { landStop(); await loading })
+  expect(getConversation).toHaveBeenCalledWith('c1')
+  // 只補送一次：再載入（或下一次重整）不會再送。
+  vi.mocked(getConversation).mockResolvedValueOnce([])
+  await act(async () => { await after.result.current.loadConversation('c2') })
+  expect(stopAsk).toHaveBeenCalledTimes(1)
 })
 
 test('既有對話裡的續問不建暫存列', async () => {
