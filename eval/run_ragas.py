@@ -38,6 +38,13 @@ M5 起：每 case 記 latency_ms（檢索＋生成牆鐘，排除 judge）；--a
   取平均**（略過 None）；`n`＝題數（不乘 N），`n_errors`＝N 次全部失敗的題數，
   `n_no_context` 與 `n_judge_errors` 只在該指標 N 次都沒有值時計入。計數因此恆為整數，
   `eval_compare.sample_facts` 照舊可用。逐次結果留在 case 的 `runs`。
+- **完整度三指標**（零 LLM，從 `_io` 算，`completeness_metrics`）：每次執行記 `statements`（faithfulness 的
+  decompose 步驟拆出的陳述句數；那一步失敗或沒有時為 None）、`cited_reports`（回答 `[n]` 引用對應到的不同研報數，
+  以脈絡片段標頭的檔名識別；對應不到的編號不算）、`answer_chars`（回答去掉空白、`*`、`#`、`>`、行首 `-` 與 `[n]`
+  標記後的字數）。在 `run()` 取走 `_io` 時算，所以從檢查點續跑時一樣算得出來（檢查點存的 result 帶 `_io`）。
+  case 層照 `--repeat` 規則跨次取平均（略過 None），summary 記 `statements_mean`、`cited_reports_mean`、
+  `answer_chars_mean`（各題均值再取平均，略過 error 與 None）。不另記 `n_effective_*`：陳述句數為 None 的次數
+  就是 decompose 失敗的次數，已由 faithfulness 的 `n_effective_faithfulness`／`judged_ids_sha` 涵蓋。
 - `--dump-io DIR` 逐題（repeat 時逐次）寫出問題、脈絡、答案與每一次 judge 呼叫的回應，
   供之後凍結集與 judge 校準用。內容含研報全文，放 `data/eval_frozen/`（已 gitignore）。
 """
@@ -81,7 +88,7 @@ from app.services.answer import (  # noqa: E402
 from app.services.citation_filter import filter_unknown_citations  # noqa: E402
 from app.services.embed import MODEL_NAME as EMBED_MODEL  # noqa: E402
 from app.services.embed import embed_query_cached  # noqa: E402
-from app.services.judge_schema import JUDGE_SCHEMA_VERSION, JudgeSchemaError  # noqa: E402
+from app.services.judge_schema import JUDGE_SCHEMA_VERSION, JudgeSchemaError, parse_statements  # noqa: E402
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, LLMUnavailableError, stream_completion  # noqa: E402
 from app.services.llm_http import ACCOUNT_KINDS  # noqa: E402
 from app.services.llm_http import JUDGE_REASONING_EFFORT as JUDGE_REASONING  # noqa: E402
@@ -264,6 +271,40 @@ async def _generate_answer(
         gen_meta["tokens"] = meta.get("tokens")
     answer = filter_unknown_citations("".join(parts), range(1, len(split_contexts(context)) + 1))
     return answer, bool(meta.get("truncated"))
+
+
+# 脈絡片段標頭（`answer.build_context`）：「[n] 報告：{file_name}（市場 …，日期 …）」，括號段可省略。
+_CTX_HEAD_RE = re.compile(r"^\[(\d+)\] 報告：(.+?)(?:（(?:市場|日期) [^（）]*）)?$")
+# 字數口徑：去掉空白、`*`、`#`、`>`、行首 `-`（清單符號與分隔線）與 `[n]` 標記。
+_ANSWER_MARKUP_RE = re.compile(r"\[\d+\]|^[ \t]*-+|[*#>\s]", re.MULTILINE)
+COMPLETENESS_KEYS = ("statements", "cited_reports", "answer_chars")
+
+
+def completeness_metrics(io: dict) -> dict:
+    """一次執行的 `_io` → 完整度三指標（定義見模組 docstring）。純函式、零 LLM。
+
+    陳述句數取最後一次 decompose 呼叫（schema 重試時前一次不合格）的回應，以 `parse_statements` 解讀；
+    呼叫出錯、回應不合 schema 或根本沒有 decompose（例如沒有脈絡）→ None。
+    """
+    answer = io.get("answer") or ""
+    reports: dict[int, str] = {}
+    for block in io.get("contexts") or []:
+        m = _CTX_HEAD_RE.match(block.split("\n", 1)[0])
+        if m:
+            reports[int(m.group(1))] = m.group(2)
+    cited = {reports[n] for n in map(int, _CITE_RE.findall(answer)) if n in reports}
+    decompose = [c for c in io.get("judge_calls") or [] if c.get("task") == "decompose"]
+    statements = None
+    if decompose and "error" not in decompose[-1]:
+        try:
+            statements = len(parse_statements(decompose[-1].get("response")))
+        except JudgeSchemaError:
+            statements = None
+    return {
+        "statements": statements,
+        "cited_reports": len(cited),
+        "answer_chars": len(_ANSWER_MARKUP_RE.sub("", answer)),
+    }
 
 
 def has_valid_citation(answer: str, n_contexts: int) -> bool:
@@ -460,6 +501,7 @@ def aggregate(per_q: list[dict]) -> dict:
     混在一起會把量尺故障讀成檢索沒找到東西。
     citation_rate／simplified_residual_rate 是「答案帶有效引用」「答案整份判為簡體」的
     題數比例（分母＝有該欄位的非 error 題）；n_truncated 是非 error 題中生成被截斷的題數。
+    <完整度指標>_mean：`COMPLETENESS_KEYS` 各題值的平均（略過 error 與 None）。
     n_effective_<指標>／judged_ids_sha：三個 judge 指標各自實際入均值的題數與題目集合的雜湊
     （eval_compare 據此判定兩份是不是在同一組題目上算的均值）。
     """
@@ -511,6 +553,7 @@ def aggregate(per_q: list[dict]) -> dict:
         **{f"n_effective_{m}": len(judged_ids(per_q, m)) for m in JUDGE_METRICS},
         "judged_ids_sha": judged_ids_sha(per_q),
         "citation_rate": _mean_of(per_q, "cited"),
+        **{f"{k}_mean": _mean_of(per_q, k) for k in COMPLETENESS_KEYS},
         "simplified_residual_rate": _mean_of(per_q, "simplified"),
         "n_truncated": n_truncated,
         "thresholds_pass": thresholds_pass,
@@ -522,7 +565,7 @@ def merge_repeats(runs: list[dict]) -> dict:
     """同一題 N 次的結果 → 一筆 case（--repeat 的彙總規則，見模組 docstring）。純函式。
 
     - 全部 N 次都 error → 整題 error（取最後一次的訊息）。
-    - 三指標、cited、simplified：跨成功的那幾次取平均，略過 None（布林當 0/1）。
+    - 三指標、完整度三指標（`COMPLETENESS_KEYS`）、cited、simplified：跨成功的那幾次取平均，略過 None（布林當 0/1）。
       某指標沒有任何值、且至少一次是 judge 出錯 → 記進 judge_errors（取最後一則）。
     - latency_ms、ttft_ms 取平均後四捨五入成整數；gen_tokens 逐鍵取平均後四捨五入；gen_truncated 任一次截斷即為真。
     - 逐次原始結果留在 runs（已去掉私有的 _io）。
@@ -556,6 +599,8 @@ def merge_repeats(runs: list[dict]) -> dict:
         if any(v is not None for v in token_means.values()) else None
     )
     merged["cited"] = _avg("cited")
+    for key in COMPLETENESS_KEYS:
+        merged[key] = _avg(key)
     merged["simplified"] = _avg("simplified")
     merged["gen_truncated"] = any(r.get("gen_truncated") for r in ok)
     if judge_errors:
@@ -978,6 +1023,8 @@ async def run(
         runs = list(flat[qi * repeat : (qi + 1) * repeat])
         for k, r in enumerate(runs):
             io = r.pop("_io", None)
+            if io is not None:  # 新跑與檢查點續跑同一條路：檢查點的 result 帶 _io
+                r.update(completeness_metrics(io))
             if dump_dir is not None and io is not None:
                 dump_io(
                     dump_dir, r, io, run_idx=k, repeat=repeat, gen_model=generator_model,
@@ -1059,6 +1106,11 @@ def _print_summary(report: dict) -> None:
         f"n={s['n']}  errors={s['n_errors']}  no_context={s['n_no_context']}  "
         f"judge_errors={s.get('n_judge_errors', 0)}  truncated={s.get('n_truncated', 0)}"
     )
+    if s.get("statements_mean") is not None or s.get("answer_chars_mean") is not None:
+        print("完整度/題         : " + "  ".join(
+            f"{k}={s[f'{k}_mean']:.1f}" if s.get(f"{k}_mean") is not None else f"{k}=n/a"
+            for k in COMPLETENESS_KEYS
+        ))
     print(f"citation_rate     : {fmt(s.get('citation_rate'))}   "
           f"simplified_residual_rate: {fmt(s.get('simplified_residual_rate'))}")
     print(f"judge             : {s.get('judge_model')}  schema v{s.get('judge_schema_version')}  "

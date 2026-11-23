@@ -119,6 +119,11 @@ METRIC_SPECS: dict[str, Spec] = {
     "n_effective_answer_relevancy": Spec(SAMPLE, ABS, "實際入 answer_relevancy 均值的題數"),
     "judged_ids_sha": Spec(SAMPLE, ABS, "三個 judge 指標各自入均值的題目 id 集合的雜湊"),
     "citation_rate": Spec(HIGHER, ABS, "答案至少引用一個存在來源 [n] 的題數比例"),
+    # 完整度（eval/run_ragas.py 的 completeness_metrics，零 LLM）。陳述句數是內容量的主訊號，列入判定；
+    # 引用研報數與字數隨脈絡篇數與寫法浮動、方向有歧義，只列出。
+    "statements_mean": Spec(HIGHER, REL, "faithfulness decompose 拆出的陳述句數（每題平均）"),
+    "cited_reports_mean": Spec(INFO, REL, "回答引用到的不同研報數（每題平均）"),
+    "answer_chars_mean": Spec(INFO, REL, "回答去掉空白、markdown 符號與 [n] 後的字數（每題平均）"),
     "simplified_residual_rate": Spec(LOWER, ABS, "答案整份被判為簡體（zh_hant.looks_simplified）的題數比例"),
     "n_truncated": Spec(LOWER, ABS, "生成撞到逾時、已吐的字被截斷的題數（stream_completion 回報）"),
     # 生成端首字時間與每題 token：成本與延遲的描述，只列出、不判方向（推理強度不同時本來就會變，判方向交給人）。
@@ -774,7 +779,7 @@ def main(argv: list[str] | None = None) -> int:
         "--rel-tolerance",
         type=float,
         default=0.25,
-        help="相對容忍值（latency 等非 [0,1] 尺度指標），預設 0.25",
+        help="相對容忍值（latency、statements_mean 等非 [0,1] 尺度指標），預設 0.25",
     )
     parser.add_argument("--json", action="store_true", help="輸出機器可讀 JSON 而非對照表")
     parser.add_argument(

@@ -380,6 +380,62 @@ class TestReasoningKeys(unittest.TestCase):
         self.assertTrue(any("judge_reasoning" in r for r in cmp_.incomparable), cmp_.incomparable)
 
 
+class TestCompletenessMetrics(unittest.TestCase):
+    """完整度三指標：statements_mean 越大越好、相對容忍、列入判定；引用研報數與字數只列出。"""
+
+    BASELINE = BASELINES / "baseline-2026-11-23-jluna-gluna-medium-topical-rerank.json"
+    OLDER = BASELINES / "baseline-2026-11-18-jluna-gluna-medium-rerank.json"
+    KEYS = ("statements_mean", "cited_reports_mean", "answer_chars_mean")
+
+    def test_specs(self):
+        spec = ec.METRIC_SPECS["statements_mean"]
+        self.assertEqual((spec.direction, spec.mode), (ec.HIGHER, ec.REL))
+        for key in ("cited_reports_mean", "answer_chars_mean"):
+            self.assertEqual(ec.METRIC_SPECS[key].direction, ec.INFO, key)
+
+    def test_backfilled_baseline_self_compare_is_clean_and_shows_the_metrics(self):
+        code, out = run_main(["--baseline", str(self.BASELINE), "--candidate", str(self.BASELINE)])
+        self.assertEqual(code, 0, out)
+        for key in self.KEYS:
+            self.assertIn(key, out)
+
+    def test_statements_drop_beyond_relative_tolerance_is_a_regression(self):
+        base = load(self.BASELINE)
+        mean = base["summary"]["statements_mean"]
+        within = deepcopy(base)
+        within["summary"]["statements_mean"] = mean * 0.8
+        self.assertEqual(row(compare(base, within), "statements_mean").status, ec.STATUS_SAME)
+        self.assertEqual(compare(base, within).exit_code, 0)
+        worse = deepcopy(base)
+        worse["summary"]["statements_mean"] = mean * 0.7
+        cmp_ = compare(base, worse)
+        self.assertEqual(row(cmp_, "statements_mean").status, ec.STATUS_WORSE)
+        self.assertEqual(cmp_.exit_code, 1)
+        self.assertEqual(compare(base, worse, rel_tolerance=0.5).exit_code, 0)
+
+    def test_cited_reports_and_chars_never_gate(self):
+        base = load(self.BASELINE)
+        cand = deepcopy(base)
+        cand["summary"]["cited_reports_mean"] = 1.0
+        cand["summary"]["answer_chars_mean"] = 10.0
+        cmp_ = compare(base, cand)
+        self.assertEqual(cmp_.exit_code, 0)
+        for key in ("cited_reports_mean", "answer_chars_mean"):
+            self.assertEqual(row(cmp_, key).status, ec.STATUS_NONE, key)
+
+    def test_older_baseline_without_the_keys_is_not_gated(self):
+        older, base = load(self.OLDER), load(self.BASELINE)
+        for key in self.KEYS:
+            self.assertNotIn(key, older["summary"])
+        cand = deepcopy(base)
+        cand["summary"]["statements_mean"] = 1.0  # 就算候選很低，舊基準線沒有這個鍵就不判定
+        cmp_ = compare(older, cand)
+        self.assertEqual([k for k in cmp_.only_in_candidate if k in self.KEYS], list(self.KEYS))
+        self.assertFalse(any(r.key in self.KEYS for r in cmp_.rows))
+        self.assertFalse(any(r.regression for r in cmp_.rows if r.key in self.KEYS))
+        self.assertEqual(sorted(compare(cand, older).only_in_baseline), sorted(self.KEYS))
+
+
 def _judged_doc(base: dict, *, judge_errors: dict[str, list[str]] | None = None, **cp_override) -> dict:
     """以真實 RAGAS 結果檔為底，模擬 run_ragas 的輸出：指定題目的指定指標 judge 出錯（None＋
     judge_errors），再照 run_ragas.aggregate 的規則重寫三個均值、n_effective_* 與 judged_ids_sha。
