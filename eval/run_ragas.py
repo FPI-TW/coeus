@@ -55,7 +55,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -77,6 +77,7 @@ from app.services.answer import (  # noqa: E402
     RETRIEVAL_K,
     SYSTEM_PROMPT,
     build_user_prompt,
+    is_historical_question,
 )
 from app.services.citation_filter import filter_unknown_citations  # noqa: E402
 from app.services.embed import MODEL_NAME as EMBED_MODEL  # noqa: E402
@@ -314,18 +315,22 @@ async def eval_question(
     agentic=True 走 M5 流程：plan_queries（profile="qa"）與第一輪 retrieve_context
     並行 → run_agentic（忽略 stage 事件、取 outcome 的合併結果）→ 以合併 context
     生成，並記 rounds/subqueries_run/skipped 歸因欄位（補查是否被跳過可歸因）。
+    相對時間窗比照問答路徑：問題明確問過去（answer.is_historical_question，台北時區的今天）時傳 0，
+    否則照 ASK_RELATIVE_WINDOW_DAYS。
     """
     base = {"id": q.get("id"), "question": q.get("question")}
     try:
         question = q["question"]
         filters = q.get("filters") or {}
+        historical = is_historical_question(question, datetime.now(timezone(timedelta(hours=8))).date())
+        window = {"relative_window_days": 0} if historical else {}
         t0 = time.monotonic()
         outcome = None
         if agentic:
             plan_task = asyncio.create_task(plan_queries(question, profile="qa"))
             try:
                 sources, context = await retrieve_context(
-                    question, filters=filters, **retrieval_params
+                    question, filters=filters, **retrieval_params, **window
                 )
                 plan = await plan_task  # plan_queries 永不 raise（失敗回 degraded 計畫）
             except BaseException:
@@ -348,6 +353,7 @@ async def eval_question(
                     "max_chars": retrieval_params.get("max_chars", MAX_CONTEXT_CHARS),
                     "rerank_top_m": retrieval_params.get("rerank_top_m", 0),
                     "rerank_timeout": ASK_RERANK_TIMEOUT,
+                    **window,
                 },
             ):
                 if kind == "outcome":
@@ -356,7 +362,7 @@ async def eval_question(
                 sources, context = outcome.sources, outcome.context
         else:
             sources, context = await retrieve_context(
-                question, filters=filters, **retrieval_params
+                question, filters=filters, **retrieval_params, **window
             )
         contexts = split_contexts(context)
         gen_meta: dict = {}
