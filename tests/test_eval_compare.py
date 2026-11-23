@@ -550,6 +550,38 @@ class TestJudgedQuestionSet(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("context_precision", out)
 
+    def test_common_only_recomputes_completeness_means_on_the_common_questions(self):
+        """題目集合不同（q003 只在 baseline 有值）：common-only 時 statements_mean 以兩邊共同的題目重算。"""
+        a = _judged_doc(self.base)
+        b = _judged_doc(self.base, judge_errors={"context_precision": ["q003"]})
+        for doc, bump in ((a, 0), (b, 1)):
+            for i, c in enumerate(doc["cases"]):
+                c["statements"] = 10.0 * (i + 1) + bump
+                c["cited_reports"] = float(i)
+                c["answer_chars"] = 100.0 * (i + 1)
+        b["cases"][2]["statements"] = None  # q003：candidate 那次 decompose 也失敗
+        b["cases"][4].pop("cited_reports")
+        for doc in (a, b):
+            for key, field_ in ec.COMPLETENESS_MEANS.items():
+                vals = [c[field_] for c in doc["cases"] if c.get(field_) is not None]
+                doc["summary"][key] = sum(vals) / len(vals)
+        b["summary"].pop("answer_chars_mean")  # 只有一邊有：照缺鍵規則不判定
+        with tempfile.TemporaryDirectory() as tmp:
+            pa, pb = _dump(tmp, "a.json", a), _dump(tmp, "b.json", b)
+            code, out = run_main(["--baseline", pa, "--candidate", pb, "--common-only", "--json"])
+        payload = json.loads(out)
+        self.assertEqual(code, 0, payload["incomparable"])
+        metrics = {m["key"]: m for m in payload["metrics"]}
+        common = [c["statements"] for c in a["cases"] if c["id"] != "q003"]
+        self.assertNotAlmostEqual(a["summary"]["statements_mean"], sum(common) / len(common))
+        self.assertAlmostEqual(metrics["statements_mean"]["baseline"], sum(common) / len(common))
+        self.assertAlmostEqual(metrics["statements_mean"]["candidate"], sum(common) / len(common) + 1)
+        reports = [c["cited_reports"] for c in a["cases"] if c["id"] != "q005"]
+        self.assertAlmostEqual(metrics["cited_reports_mean"]["baseline"], sum(reports) / len(reports))
+        self.assertNotIn("answer_chars_mean", metrics)
+        self.assertIn("answer_chars_mean", payload["only_in_baseline"])
+        self.assertTrue(any(n.startswith("statements_mean：") and "7 題" in n for n in payload["common_only"]))
+
     def test_common_only_needs_per_case_results(self):
         a = _judged_doc(self.base)
         b = deepcopy(a)
