@@ -380,7 +380,8 @@ class RecencyTests(unittest.TestCase):
                 make_row("weak_new", "弱新.pdf", "TW", "先進封裝。", date(2026, 6, 17)),
             ),
         ]
-        sources, _ = build_context(scored, now=self.NOW)
+        # 兩篇相隔超過一年：關掉相對時間窗，只看排序（時間窗見 tests/test_select_reports.py）
+        sources, _ = build_context(scored, now=self.NOW, relative_window_days=0)
         self.assertEqual(sources[0].report_id, "strong_old")
 
     def test_missing_date_treated_as_oldest(self):
@@ -649,7 +650,7 @@ class SourceLatestTests(unittest.TestCase):
             (2, 0.90, make_row("a", "a.pdf", "TW", "封裝。", date(2025, 1, 1))),
             (0, 0.80, make_row("b", "b.pdf", "TW", "封裝。", date(2026, 6, 10))),
         ]
-        sources, _ = build_context(scored, now=self.NOW)
+        sources, _ = build_context(scored, now=self.NOW, relative_window_days=0)  # 兩篇都要在
         by_id = {s.report_id: s for s in sources}
         self.assertTrue(by_id["b"].is_latest)
         self.assertFalse(by_id["a"].is_latest)
@@ -681,12 +682,13 @@ class StaleCutoffTests(unittest.TestCase):
 
     def test_stale_kept_when_few_fresh(self):
         # 僅 1 篇夠新 → 不截斷（fail-open）：歷史性問題仍保留舊研報，不漏
+        # （歷史題不套相對時間窗，answer_question 傳 0）
         scored = [
             (0, 0.80, make_row("f1", "新.pdf", "TW", "記憶體報價。", date(2026, 6, 10))),
             (0, 0.80, make_row("s1", "舊1.pdf", "TW", "記憶體報價。", date(2024, 1, 1))),
             (0, 0.80, make_row("s2", "舊2.pdf", "TW", "記憶體報價。", date(2023, 6, 1))),
         ]
-        sources, _ = build_context(scored, now=self.NOW)
+        sources, _ = build_context(scored, now=self.NOW, relative_window_days=0)
         rids = [s.report_id for s in sources]
         self.assertEqual(len(rids), 3)
         self.assertIn("s1", rids)

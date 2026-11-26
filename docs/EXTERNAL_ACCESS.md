@@ -177,7 +177,7 @@ session 存在 DB（`research.user_session`），逐一撤銷在管理後台做�
 | 踢掉某一個人（例如懷疑他的 cookie 外流） | 管理後台「強制登出」 | 他的所有 session 失效，可重新登入 |
 | 某人離職或暫停使用 | 管理後台「停用」 | 下一個請求就進不來；session 一併撤銷，重新啟用也不會復活 |
 | 某人忘記密碼或密碼外流 | 管理後台「重設密碼」 | 新密碼生效、他的所有 session 失效 |
-| 管理員全進不去 | `uv run python scripts/create_admin.py --username <名稱> --reset-password` | 重設密碼並重新啟用 |
+| 管理員全進不去 | `uv run python scripts/create_admin.py --username <帳號> --reset-password` | 重設密碼並重新啟用 |
 | 踢掉所有人 | `REPORT_MARK_SESSION_EPOCH` 填一個新值（慣例填日期）並重啟 | 全員登出 |
 | 什麼都不做 | — | 任一 session 最長活 30 天（`web/auth.py` 的 `MAX_ABSOLUTE_TTL`）；滑動續期只推遲到期時間，不會延長這條上限 |
 
@@ -207,6 +207,6 @@ sudo journalctl -u report-mark-web.service | grep -E "登入成功|登入失敗|
 | 某一個人被登出或登入顯示「此帳號已停用」 | 管理員對他做了強制登出、重設密碼或停用；查管理後台的操作紀錄 |
 | 登入顯示「登入服務暫時無法使用」、或頁面回 503 | 帳號服務（DB）不可用：`curl -s http://localhost:8097/healthz` 應回 503，先處理 DB |
 | 一直回登入頁、輸入正確仍進不去 | session cookie 沒被接受（瀏覽器擋第三方/封鎖 cookie），或 `REPORT_MARK_SESSION_SECRET` 每次重啟都變（請在 `.env` 固定一組） |
-| 沒有人登得進去、啟動日誌有「沒有任何啟用中的管理員」 | 還沒建第一位管理員 → `uv run python scripts/create_admin.py --username <名稱>` |
+| 沒有人登得進去、啟動日誌有「沒有任何啟用中的管理員」 | 還沒建第一位管理員 → `uv run python scripts/create_admin.py --username <Email>` |
 | `make edge-logs` 看不到 tunnel 連線 | token 錯/沒填 → 檢查 `deploy/.env`；Cloudflare 儀表板確認隧道狀態為 HEALTHY |
 | 外網打不開但 LAN 正常 | Cloudflare Public Hostname 的 Service 是否設成 `http://nginx:80`；DNS 記錄是否由隧道自動建立 |

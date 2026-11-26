@@ -255,9 +255,9 @@ class SecurityOpsDbTests(unittest.TestCase):
 
     def test_admin_revoke_session_rolls_back_when_audit_fails(self):
         async def go(factory):
-            boss = await accounts.create_user(f"so_boss_{uuid.uuid4().hex[:8]}", "first-password-1", "admin",
-                                              actor_id=None)
-            target = await accounts.create_user(f"so_t_{uuid.uuid4().hex[:8]}", "first-password-1", "user",
+            boss = await accounts.create_user(f"so_boss_{uuid.uuid4().hex[:8]}@example.com", "first-password-1",
+                                              "admin", actor_id=None)
+            target = await accounts.create_user(f"so_t_{uuid.uuid4().hex[:8]}@example.com", "first-password-1", "user",
                                                 actor_id=None)
             sid = await accounts.create_session(target.id, max_age_seconds=3600)
 

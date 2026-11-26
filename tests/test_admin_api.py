@@ -52,7 +52,7 @@ class AdminApiTests(unittest.TestCase):
             ("get", "/api/admin/users", None),
             ("post", "/api/admin/users", {"username": "eve", "password": "eve-password-1", "role": "admin"}),
             ("patch", f"/api/admin/users/{self.alice}", {"role": "admin"}),
-            ("post", f"/api/admin/users/{self.root}/password", {"password": "hijacked-password"}),
+            ("post", f"/api/admin/users/{self.root}/password", {"password": "hijacked-password1"}),
             ("post", f"/api/admin/users/{self.root}/logout", None),
             ("get", "/api/admin/audit", None),
             ("get", "/api/admin/audit/verify", None),
@@ -86,26 +86,52 @@ class AdminApiTests(unittest.TestCase):
         self.assertNotIn("password", r.text.lower().replace("password_changed_at", ""))
 
     def test_create_user_then_new_user_can_log_in(self):
-        r = self.admin.post("/api/admin/users", json={"username": "bob", "password": "bob-password-1"})
+        r = self.admin.post("/api/admin/users", json={"username": "bob@example.com", "password": "bob-password-1"})
         self.assertEqual(r.status_code, 201, r.text)
-        self.assertEqual((r.json()["username"], r.json()["role"], r.json()["enabled"]), ("bob", "user", True))
-        self._login("bob", "bob-password-1")
+        self.assertEqual((r.json()["username"], r.json()["role"], r.json()["enabled"]),
+                         ("bob@example.com", "user", True))
+        self._login("bob@example.com", "bob-password-1")
         entry = self.store.audit[0]  # 新的在前
         self.assertEqual((entry.action, entry.actor_user_id, entry.target_id),
                          ("user.create", self.root, r.json()["id"]))
 
     def test_create_user_errors(self):
-        dup = self.admin.post("/api/admin/users", json={"username": "ALICE", "password": "x-password-12"})
+        self.store.add_user("alice@example.com", USER_PW, "user")
+        dup = self.admin.post("/api/admin/users", json={"username": "ALICE@example.com", "password": "x-password-12"})
         self.assertEqual(dup.status_code, 409)
         self.assertIn("已存在", dup.json()["detail"])
-        weak = self.admin.post("/api/admin/users", json={"username": "carol", "password": "short"})
+        weak = self.admin.post("/api/admin/users", json={"username": "carol@example.com", "password": "abc12"})
         self.assertEqual(weak.status_code, 400)
         self.assertIn("至少", weak.json()["detail"])
-        bad_name = self.admin.post("/api/admin/users", json={"username": "a b", "password": "x-password-12"})
-        self.assertEqual(bad_name.status_code, 400)
-        bad_role = self.admin.post("/api/admin/users", json={"username": "dave", "password": "x-password-12",
-                                                             "role": "superuser"})
+        for pw in ("abcdefghij", "1234567890", "!@#$%^&*()"):
+            with self.subTest(password=pw):
+                r = self.admin.post("/api/admin/users", json={"username": "carol@example.com", "password": pw})
+                self.assertEqual(r.status_code, 400)
+                self.assertIn("英文字母與數字", r.json()["detail"])
+        for name in ("carol", "a b", "carol@example", "carol@@example.com", "carol@.example.com",
+                     "王小明@example.com", "carol@example.c", "x" * 250 + "@example.com"):
+            with self.subTest(username=name):
+                r = self.admin.post("/api/admin/users", json={"username": name, "password": "x-password-12"})
+                self.assertEqual(r.status_code, 400)
+                self.assertIn("Email", r.json()["detail"])
+        bad_role = self.admin.post("/api/admin/users", json={"username": "dave@example.com",
+                                                             "password": "x-password-12", "role": "superuser"})
         self.assertEqual(bad_role.status_code, 422)
+        self.assertFalse(any(e.action == "user.create" for e in self.store.audit))
+
+    def test_create_user_accepts_email_and_special_characters(self):
+        for name, pw in (("ming.wang+ops@tf-1.com.tw", "P@ss_w0rd!"), ("x_y%z@sub.example.org", "abc12345")):
+            with self.subTest(username=name):
+                r = self.admin.post("/api/admin/users", json={"username": name, "password": pw})
+                self.assertEqual(r.status_code, 201, r.text)
+                self._login(name, pw)
+
+    def test_existing_non_email_accounts_still_log_in(self):
+        # 規則只管新建：改規則前建的非 Email 帳號（setUp 的 root／alice）照常登入與管理。
+        self._login("alice", USER_PW)
+        r = self.admin.post(f"/api/admin/users/{self.alice}/password", json={"password": "new-alice-pw1"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self._login("alice", "new-alice-pw1")
 
     # ── 角色、停用 ──────────────────────────────────────────────────
     def test_promote_and_demote(self):
@@ -265,10 +291,10 @@ class AdminApiTests(unittest.TestCase):
 
     def test_admin_actions_are_logged_without_password(self):
         with self.assertLogs("web.routers.admin", level="INFO") as cm:
-            self.admin.post(f"/api/admin/users/{self.alice}/password", json={"password": "logged-password"})
+            self.admin.post(f"/api/admin/users/{self.alice}/password", json={"password": "logged-password1"})
         blob = "\n".join(cm.output)
         self.assertIn("user.reset_password", blob)
-        self.assertNotIn("logged-password", blob)
+        self.assertNotIn("logged-password1", blob)
 
 
 
@@ -329,7 +355,7 @@ class PrivilegeApiTests(unittest.TestCase):
     def test_non_super_admin_cannot_touch_super(self):
         plain = _client()
         self.assertEqual(plain.post("/login", data={"username": "plain", "password": ADMIN_PW}).status_code, 303)
-        r = plain.post(f"/api/admin/users/{self.boss}/password", json={"password": "hijacked-password"})
+        r = plain.post(f"/api/admin/users/{self.boss}/password", json={"password": "hijacked-password1"})
         self.assertEqual((r.status_code, r.json()["code"]), (403, "super_required"))
         r = plain.patch(f"/api/admin/users/{self.boss}", json={"enabled": False})
         self.assertEqual((r.status_code, r.json()["code"]), (403, "super_required"))

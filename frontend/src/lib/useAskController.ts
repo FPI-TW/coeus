@@ -5,6 +5,7 @@ import { parseAskEvent } from './askSchemas'
 import { streamAsk, getConversation, sendFeedback, stopAsk, getQaVersions, type StopBody } from './askApi'
 import { ApiError } from './api'
 import { clearPendingConversation, resolvePendingConversation, startPendingConversation } from './pendingConversation'
+import { flushUnfinished, saveUnfinished } from './unfinishedAsk'
 import { useLocale } from './useLocale'
 import { useWebSearch, useWebSearchPaused } from './useWebSearch'
 
@@ -139,16 +140,27 @@ export function useAskController(): UseAskController {
     }
   }, [settlePending, unfinishedBody, keepUnfinished, dispatch])
 
-  // 重整或關頁：串流連線一斷，後端就不會替這一輪落庫。趁頁面還在時送出（keepalive 讓請求活過卸載）。
+  // 重整或關頁：串流連線一斷，後端就不會替這一輪落庫。趁頁面還在時送出（keepalive 讓請求活過卸載），
+  // 另留一份給重整後的頁面補送：keepalive 那一次可能比重整後載入對話的請求晚到（見 unfinishedAsk.ts）。
   useEffect(() => {
     const onPageHide = () => {
       const turnId = streamTurnRef.current
       if (!turnId || !askCtrl.current || !isFreshStream(streamBodyRef.current) || streamDoneRef.current) return
-      void stopAsk(unfinishedBody(turnId), { keepalive: true }).catch(() => { /* 頁面都要關了，沒得補救 */ })
+      const body = unfinishedBody(turnId)
+      saveUnfinished(body)
+      void stopAsk(body, { keepalive: true }).catch(() => { /* 頁面都要關了，重整後的頁面會補送 */ })
     }
     window.addEventListener('pagehide', onPageHide)
     return () => window.removeEventListener('pagehide', onPageHide)
   }, [unfinishedBody])
+
+  // 重整前留下的那一輪：補送之後側欄重抓一次。沒帶 ?c 的頁面（新對話的第一題）不會走 loadConversation，
+  // 只有這裡會送。
+  useEffect(() => {
+    void flushUnfinished().then(flushed => {
+      if (flushed) void qc.invalidateQueries({ queryKey: ['conversations'] })
+    })
+  }, [qc])
 
 
   // 共用串流：submit/regenerate/editResubmit 皆走此；fresh＝submit 的新提問。
@@ -280,6 +292,9 @@ export function useAskController(): UseAskController {
     convRef.current = id
     setConversationId(id)
     try {
+      // 重整前沒跑完的那一輪先落庫再載入，否則載入的對話裡可能還沒有它（見 unfinishedAsk.ts）。
+      await flushUnfinished()
+      if (my !== reqId.current) return
       const items = await getConversation(id)
       if (my !== reqId.current) return
       dispatch({ type: 'load', turns: items.map(turnFromHistory) })

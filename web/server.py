@@ -123,15 +123,17 @@ def _check_llm_models() -> None:
     """啟動自檢：線上任務解析到的模型各自需要什麼，缺了就說出來（不擋啟動）。
 
     `/healthz` 只探 DB。目前 provider 的金鑰沒填、模型名不在白名單（含舊的 `claude-*`）、端點設定有誤
-    （`llm_models.config_problems`）、網搜總閘開著卻沒有後端，都會讓問答回 SSE error（或時效題一律婉拒）而
+    （`llm_models.config_problems`）、推理旋鈕拼錯（`llm_models.reasoning_problems`）、網搜總閘開著卻沒有後端，
+    都會讓問答回 SSE error（或時效題一律婉拒）而
     健康檢查照樣 ok。判準在
     `llm_models.diagnose`（純函式）；金鑰只看有沒有值，不記任何內容。
     """
     resolved = llm_models.resolve_all(llm_models.ONLINE_TASKS)
+    effort = llm_models.resolve_all_reasoning(llm_models.ONLINE_TASKS)
     logger.warning(
         "LLM 模型：provider=%s；%s",
         llm_models.provider(),
-        "、".join(f"{task}={model}" for task, model in resolved.items()),
+        "、".join(f"{task}={model}（推理 {effort[task]}）" for task, model in resolved.items()),
     )
     findings = llm_models.diagnose(
         resolved,
@@ -140,6 +142,7 @@ def _check_llm_models() -> None:
         prov=llm_models.provider(),
         allowed=llm_models.allowed_models(),
         problems=llm_models.config_problems(),
+        reasoning=llm_models.reasoning_problems(llm_models.ONLINE_TASKS),
     )
     for level, message in findings:
         logger.log(level, "%s", message)

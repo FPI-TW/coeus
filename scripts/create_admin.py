@@ -3,16 +3,16 @@
 用法（密碼一律互動輸入兩次，或 `--password-stdin` 從標準輸入讀一行；**絕不經 argv**，
 argv 會留在 shell 歷史與 `ps` 輸出裡）：
 
-    uv run python scripts/create_admin.py --username alice              # 建立管理員
-    uv run python scripts/create_admin.py --username alice --super      # 建立 super admin
-    uv run python scripts/create_admin.py --username linebot --role user --password-stdin < pw
-    uv run python scripts/create_admin.py --username alice --reset-password   # 忘記密碼／被停用
-    uv run python scripts/create_admin.py --username alice --reset-totp       # 驗證器 App 遺失
-    uv run python scripts/create_admin.py --from-env                    # 舊共用帳密 → 第一位管理員
+    uv run python scripts/create_admin.py --username alice@example.com                    # 建立管理員
+    uv run python scripts/create_admin.py --username alice@example.com --super            # 建立 super admin
+    uv run python scripts/create_admin.py --username linebot@example.com --role user --password-stdin < pw
+    uv run python scripts/create_admin.py --username alice@example.com --reset-password   # 忘記密碼／被停用
+    uv run python scripts/create_admin.py --username alice@example.com --reset-totp       # 驗證器 App 遺失
+    uv run python scripts/create_admin.py --from-env                                      # 舊共用帳密 → 第一位管理員
     uv run python scripts/create_admin.py --list
 
 `--from-env` 讀 repo 根 `.env` 的 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（共用帳密時代的
-設定）建成管理員；帳號已存在時什麼都不做（可重跑）。舊密碼不符合新政策（至少 10 字元）時
+設定）建成管理員；帳號已存在時什麼都不做（可重跑）。舊密碼不符合新政策（至少 8 字元、含英文與數字）時
 拒絕，請改用 `--username` 互動設定新密碼。轉完之後那兩個鍵就可以從環境檔移除。
 
 `--reset-password` 會重設密碼、重新啟用、撤銷該帳號所有 session；給了 `--role` 才改角色、給了

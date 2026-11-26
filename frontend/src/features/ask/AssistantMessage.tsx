@@ -30,9 +30,11 @@ interface Props {
   onFollowup: (item: string) => void
   onSetVersion: (i: number) => void
   disabled?: boolean
+  /** 標頭點陣球的共享版面 id（思考中的大球開始寫答案時飛到這裡）。 */
+  orbLayoutId?: string
 }
 
-export function AssistantMessage({ turn, isLast = true, onCite, onOpenSources, onFeedback, onNoticeRetry, onErrorRetry, onRegenerate, onFollowup, onSetVersion, disabled = false }: Props) {
+export function AssistantMessage({ turn, isLast = true, onCite, onOpenSources, onFeedback, onNoticeRetry, onErrorRetry, onRegenerate, onFollowup, onSetVersion, disabled = false, orbLayoutId }: Props) {
   const webPaused = useWebSearchPaused()
   if (turn.phase === 'notice') {
     // 時效題刻意不給「換個說法重新提問」：系統缺的是資料不是措辭，換說法只會讓
@@ -53,11 +55,12 @@ export function AssistantMessage({ turn, isLast = true, onCite, onOpenSources, o
   const streaming = turn.phase === 'streaming'
   const items = sourceItems(view)
   const settled = (turn.phase === 'done' || turn.phase === 'stopped') && !turn.isOfftopic
-  const showThinking = turn.stages.length > 0 || turn.phase === 'thinking' || turn.phase === 'streaming'
+  // 思考中由 TurnRow 的置中大球代替，標頭從寫答案開始才出現。
+  const showThinking = turn.phase !== 'thinking' && (turn.stages.length > 0 || turn.phase === 'streaming')
 
   return (
     <div className={styles.msg}>
-      {showThinking && <ThinkingSteps turn={turn} referenced={view.sources.length} />}
+      {showThinking && <ThinkingSteps turn={turn} referenced={view.sources.length} orbLayoutId={orbLayoutId} />}
       {/* 失敗時仍保留已串出的部分答案（reducer 有保留 turn.answer），只在下方補失敗列，
           不整段抹除使用者已讀到的內容。 */}
       {view.answer && (

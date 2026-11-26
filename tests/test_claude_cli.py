@@ -846,7 +846,7 @@ class EscalationKeyTests(unittest.TestCase):
 
 USAGE_FIELDS = {
     "ts", "task", "file_hash", "report_id", "backend", "model_req", "model_resp", "prompt_sha256",
-    "tokens", "finish_reason", "kind", "attempts", "ttft_ms", "total_ms", "provider",
+    "tokens", "finish_reason", "kind", "attempts", "ttft_ms", "total_ms", "provider", "reasoning_effort",
 }
 
 

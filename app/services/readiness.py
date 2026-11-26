@@ -85,6 +85,7 @@ def llm_config_ready(env: Mapping[str, str] | None = None) -> bool:
         prov=prov,
         allowed=llm_models.allowed_models(env),
         problems=llm_models.config_problems(env),
+        reasoning=llm_models.reasoning_problems(llm_models.ONLINE_TASKS, env),
     )
     return not any(level >= logging.ERROR for level, _ in findings)
 
