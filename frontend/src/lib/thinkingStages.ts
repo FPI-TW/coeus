@@ -1,4 +1,6 @@
+import type { OrbState } from 'thinking-orbs'
 import type { AskStage } from './askSchemas'
+import type { Turn } from './askReducer'
 import { t } from '@/i18n'
 
 export type StepState = 'done' | 'active' | 'pending'
@@ -37,4 +39,30 @@ export function stagesToSteps(reached: AskStage[], webUsed: boolean): ThinkStep[
     name: s.name,
     state: lastIdx === -1 ? 'pending' : i < lastIdx ? 'done' : i === lastIdx ? 'active' : 'pending',
   }))
+}
+
+// 思考中的點陣球（thinking-orbs）：動畫跟著目前步驟換。排隊與還沒抵達任何步驟時是 breathing。
+const ORB_STATE: Record<AskStage, OrbState> = {
+  understanding: 'solving',
+  retrieved: 'searching',
+  evaluating: 'weaving',
+  reading: 'working',
+  searching_web: 'connecting',
+  generating: 'composing',
+}
+
+/**
+ * 進行中（排隊、思考、寫答案）的狀態文字與點陣球動畫；標頭與思考中的大球共用。
+ * 後端在取得併發名額前先送 queued（web/concurrency.py）；排第一位不報名次，那只是雜訊。
+ */
+export function liveStatus(turn: Turn): { label: string; orb: OrbState } {
+  if (turn.queuePosition !== null) {
+    const pos = turn.queuePosition
+    return { label: pos > 1 ? t('ask.thinkingSteps.queuedPosition', { pos }) : t('ask.thinkingSteps.queued'), orb: 'breathing' }
+  }
+  if (turn.phase === 'streaming') return { label: t('ask.thinkingSteps.writingTheAnswer'), orb: 'composing' }
+  const active = stagesToSteps(turn.stages, turn.webUsed).find(s => s.state === 'active')
+  return active
+    ? { label: `${active.name}…`, orb: ORB_STATE[active.key] }
+    : { label: t('ask.thinkingSteps.thinking'), orb: 'breathing' }
 }

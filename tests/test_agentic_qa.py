@@ -534,6 +534,23 @@ class TestRunAgentic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["max_passages"], self.params["max_passages"])
         self.assertEqual(call["max_chars"], self.params["max_chars"])
         self.assertLessEqual(call["rerank_timeout"], self.params["rerank_timeout"])
+        # 沒帶時間窗＝None（retrieve_context 退回 ASK_RELATIVE_WINDOW_DAYS）
+        self.assertIsNone(call["relative_window_days"])
+
+    async def test_supplement_uses_the_first_round_relative_window(self):
+        """歷史題（answer_question 傳 0）的補查也不套相對時間窗。"""
+        self._use_settings()
+        self.params["relative_window_days"] = 0
+        q2 = "聯電 先進製程 進度"
+        retrieve_calls = []
+        payload = '{"sufficient": false, "queries": ["' + q2 + '"]}'
+        result_map = {q2: _batch(("r2", "b.pdf", None, ["乙段"]))}
+        with (
+            patch.object(qp, "stream_completion", _eval_stream([payload], [])),
+            patch.object(rp, "retrieve_context", _retrieving(result_map, retrieve_calls)),
+        ):
+            await self._collect(self._plan(self.Q, "聯電 2026 展望"))
+        self.assertEqual(retrieve_calls[0]["relative_window_days"], 0)
 
     async def test_evaluation_garbage_collapses_degraded(self):
         self._use_settings()

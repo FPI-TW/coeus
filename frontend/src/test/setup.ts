@@ -30,6 +30,9 @@ if (!('ResizeObserver' in window)) {
 if (!Element.prototype.hasPointerCapture) Element.prototype.hasPointerCapture = () => false
 if (!Element.prototype.releasePointerCapture) Element.prototype.releasePointerCapture = () => {}
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {}
+// 思考區的點陣球（thinking-orbs）畫在 canvas 上，jsdom 沒有 2D context，每次掛載都會印「Not implemented」。
+// 回 null 就好：元件拿不到 context 直接不畫，canvas 元素與屬性照常存在。
+HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext
 
 // 介面字典：正式環境依語系 lazy 載入（src/i18n/index.ts），測試一次同步登記全部，預設語系 zh-Hant。
 // 每題結束把語系切回 zh-Hant、業務時區還原成預設，並清掉偏好（localStorage 與 cookie），切換語系或時區的測試

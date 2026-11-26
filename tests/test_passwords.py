@@ -40,18 +40,31 @@ class PasswordHashTests(unittest.TestCase):
 
 class PasswordPolicyTests(unittest.TestCase):
     def test_too_short(self):
-        self.assertIn("至少", passwords.password_problem("x" * (passwords.MIN_PASSWORD_LENGTH - 1)))
+        self.assertIn("至少", passwords.password_problem("a1" * 3 + "a"))
 
     def test_min_length_ok(self):
-        self.assertIsNone(passwords.password_problem("x" * passwords.MIN_PASSWORD_LENGTH))
+        self.assertEqual(passwords.MIN_PASSWORD_LENGTH, 8)
+        self.assertIsNone(passwords.password_problem("abcdef12"))
 
     def test_too_long(self):
-        self.assertIn("最多", passwords.password_problem("x" * (passwords.MAX_PASSWORD_LENGTH + 1)))
+        self.assertIn("最多", passwords.password_problem("a1" * (passwords.MAX_PASSWORD_LENGTH // 2 + 1)))
+
+    def test_requires_letter_and_digit(self):
+        self.assertIn("英文字母與數字", passwords.password_problem("abcdefgh"))
+        self.assertIn("英文字母與數字", passwords.password_problem("12345678"))
+        self.assertIn("英文字母與數字", passwords.password_problem("!@#$%^&*"))
+        # 中文字不算英文字母。
+        self.assertIn("英文字母與數字", passwords.password_problem("密碼密碼1234"))
+        self.assertIsNone(passwords.password_problem("Abcdefg1"))
+
+    def test_special_characters_allowed(self):
+        self.assertIsNone(passwords.password_problem("abc123!@#"))
+        self.assertIsNone(passwords.password_problem("P@ss_w0rd-2026"))
 
     def test_surrounding_whitespace_rejected(self):
-        self.assertIsNotNone(passwords.password_problem(" long-enough-password"))
-        self.assertIsNotNone(passwords.password_problem("long-enough-password\n"))
-        self.assertIsNone(passwords.password_problem("long enough password"))
+        self.assertIsNotNone(passwords.password_problem(" long-enough-password1"))
+        self.assertIsNotNone(passwords.password_problem("long-enough-password1\n"))
+        self.assertIsNone(passwords.password_problem("long enough password1"))
 
 
 if __name__ == "__main__":

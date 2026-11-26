@@ -82,7 +82,7 @@ cd deploy/compose
 cp .env.example .env && chmod 600 .env       # 填【必填】：POSTGRES_PASSWORD、REPORT_MARK_SESSION_SECRET、LLM 金鑰
 sudo install -d -o 10001 -g 10001 -m 0750 /srv/report-mark-backups   # BACKUP_HOST_DIR 指向它
 docker compose run --rm migrate              # 空庫：從 baseline 建到 head（免確認、不備份）
-docker compose run --rm web create-admin --username <名稱>   # 第一位管理員（互動輸入密碼）
+docker compose run --rm web create-admin --username <Email>   # 第一位管理員（互動輸入密碼）
 docker compose up -d
 curl -fsS http://127.0.0.1:8097/readyz       # {"status":"ok"}
 ```
@@ -373,7 +373,7 @@ cp .env.example .env && chmod 600 .env         # 填 POSTGRES_PASSWORD、REPORT_
 alias dc='docker compose -f docker-compose.yml -f ../demo/docker-compose.demo.yml'
 dc up -d postgres s3 fake-llm
 dc run --rm migrate
-dc run --rm web create-admin --username demo
+dc run --rm web create-admin --username demo@example.com
 AWS_ACCESS_KEY_ID=moto AWS_SECRET_ACCESS_KEY=moto aws --endpoint-url http://127.0.0.1:5000 s3 mb s3://demo-research
 AWS_ACCESS_KEY_ID=moto AWS_SECRET_ACCESS_KEY=moto aws --endpoint-url http://127.0.0.1:5000 s3 sync /srv/demo-corpus/corpus s3://demo-research/research/
 dc run --rm scheduler python scripts/connector_sync.py --force   # 不等排程（每 15 分鐘）

@@ -1,0 +1,12 @@
+/* 思考中的置中大球：在佔滿可見高度的最後一輪裡（TurnRow 的 .fill）撐滿剩下的空間並置中；
+   不是最後一輪（重新生成中間輪）時只佔自己的高度。 */
+.hero {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 20px; padding: 32px 0;
+}
+.orb { flex: none; }
+.status {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 14px; color: var(--tf-text-2); font-variant-numeric: tabular-nums;
+}
+.clock { font-size: 12.5px; color: var(--tf-text-4); }

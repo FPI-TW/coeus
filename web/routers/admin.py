@@ -95,9 +95,9 @@ class UserListResponse(BaseModel):
 
 
 class CreateUserRequest(BaseModel):
-    # 長度上限只為擋巨大 payload；實際規則（2–64 字元、密碼 10–256）由服務層判，
+    # 長度上限只為擋巨大 payload；實際規則（帳號 Email 格式、密碼 8–256 且含英文與數字）由服務層判，
     # 回 400 與中文原因，而不是 pydantic 的 422 英文訊息。
-    username: str = Field(..., max_length=200)
+    username: str = Field(..., max_length=320)
     password: str = Field(..., max_length=1024)
     role: Role = "user"
 

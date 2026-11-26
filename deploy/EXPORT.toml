@@ -100,6 +100,7 @@ include = [
   "tests/test_analytics_db.py",
   "tests/test_analyze_qa_log.py",
   "tests/test_answer.py",
+  "tests/test_answer_relative_window.py",
   "tests/test_answer_trusted.py",
   "tests/test_api_clients.py",
   "tests/test_api_clients_db.py",
