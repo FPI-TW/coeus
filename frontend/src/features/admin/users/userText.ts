@@ -14,18 +14,20 @@ export const SCOPE_LABELS: Record<GrantableScope, string> = {
 }
 
 // 密碼政策與後端 app/services/passwords.py 相同；這裡只是提早提示，後端仍會再驗一次。
-export const MIN_PASSWORD = 10
+export const MIN_PASSWORD = 8
 
-// 帳號規則與後端 app/services/accounts.py 的 `_USERNAME_RE`（`^[\w.@-]{2,64}$`）相同：文字、數字與 . _ @ -。
-const USERNAME_RE = /^[\p{L}\p{N}._@-]{2,64}$/u
+// 帳號規則與後端 app/services/accounts.py 的 `_EMAIL_RE`、`MAX_EMAIL_LENGTH` 相同：Email 格式、只收 ASCII、最多 254 字元。
+const EMAIL_RE = /^[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$/
+export const MAX_USERNAME = 254
 
 /** 帳號名稱不合規則時的訊息（文案同後端）；合規回 null。傳入的是已去頭尾空白的值。 */
 export function usernameProblem(username: string): string | null {
-  return USERNAME_RE.test(username) ? null : t('admin.users.userText.usernamesMustBe264')
+  return username.length <= MAX_USERNAME && EMAIL_RE.test(username) ? null : t('admin.users.userText.usernameMustBeEmail')
 }
 
 export function passwordProblem(password: string): string | null {
-  return password.length < MIN_PASSWORD ? t('admin.users.userText.passwordsMustBeAtLeast', { MIN_PASSWORD }) : null
+  if (password.length < MIN_PASSWORD) return t('admin.users.userText.passwordsMustBeAtLeast', { MIN_PASSWORD })
+  return /[A-Za-z]/.test(password) && /[0-9]/.test(password) ? null : t('admin.users.userText.passwordNeedsLetterAndDigit')
 }
 
 export type ConfirmKind = 'disable' | 'demote' | 'logout' | 'delete' | 'resetTotp'
