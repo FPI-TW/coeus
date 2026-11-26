@@ -53,7 +53,7 @@ REAL_LLM_COMPOSE = ROOT / "deploy" / "demo" / "docker-compose.real-llm.yml"
 DOCKERFILE = ROOT / "deploy" / "container" / "Dockerfile"
 PROFILE_DIR = ROOT / "profiles" / "demo"
 DEFAULT_IMAGE = "report-mark:e2e"
-ADMIN_USER = "e2e-admin"
+ADMIN_USER = "e2e-admin@example.com"
 BUCKET = "demo-research"
 PREFIX = "research/"
 TAIPEI = timezone(timedelta(hours=8))

@@ -55,7 +55,7 @@
 uv sync                              # Python 3.11+；torch 為 CPU-only
 [ -e .env ] || cp .env.example .env  # 只在新 checkout 建立，不要覆蓋既有 .env（主 checkout 的是部署設定）
                                      # 新建後務必改掉 REPORT_MARK_SESSION_SECRET 的佔位值（程式只擋空值，佔位字串會被當成真金鑰）
-uv run python scripts/create_admin.py --username <名稱>   # 套完 schema 後建第一位管理員（密碼互動輸入，不經 argv）
+uv run python scripts/create_admin.py --username <Email>   # 套完 schema 後建第一位管理員（密碼互動輸入，不經 argv）
 make setup                           # 相依 + pgvector 容器 + alembic upgrade head（空庫）
 make schema CONFIRM=<host:port/db>   # 已有資料的庫做 migration：逐字確認目標（RDS 不適用，見「環境角色與資料安全」）
 make schema-check                    # 嚴格 drift 比對（零＝0、有＝1）；既有庫導入見「改動對照表」
