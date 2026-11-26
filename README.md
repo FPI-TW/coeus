@@ -68,7 +68,7 @@
 uv sync                       # Python 3.11+；torch 走 CPU-only index
 make setup                    # 相依 + pgvector 容器（host port 5436）+ alembic upgrade head
 [ -e .env ] || cp .env.example .env   # 只在新 checkout 建立、不覆蓋既有 .env；新建後換掉 REPORT_MARK_SESSION_SECRET 的佔位值（程式只擋空值）
-uv run python scripts/create_admin.py --username <名稱>   # 第一位管理員（套完 schema 之後）
+uv run python scripts/create_admin.py --username <Email>   # 第一位管理員（套完 schema 之後）
 
 # 全語料三支（初次建庫；部署主機的增量走 sync 鏈）
 EXTRACTOR=pdfplumber uv run python scripts/extract_all.py   # 批次不讀 .env；不帶就走程式預設的 pypdf
@@ -200,7 +200,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | PUT | `/api/review/{kind}/{subject_id}` | `kind` 同上；`subject_id` 為 UUID；JSON `status`（必填：`open`／`resolved`／`dismissed`）、`note`（最多 1000 字）、`verification`（`untested`／`passed`／`failed`） | `{kind, subject_id, status, note, verification, updated_at, reviewer}` | 記錄人工處理結果；送 `open` 可重新打開。限管理員（`review.manage`）。驗證結果由人填寫，不會重跑評測或抽取；記下處理人（`reviewer_user_id`）並寫一列 `admin_audit_log`（`review.update`，不含註記全文）。不存在的項目回 404 |
 | POST | `/api/review/qa/{qa_id}/access` | `qa_id` 為 UUID；無 body | `{qa_id, kinds, created_at, question, answer}` | 讀**一筆**待複核問答的原文（不含對話串其他輪）。另要 `qa_content.read`（403 `missing_scope`）。只限此刻在佇列裡的項目：現行 judge 低於門檻或倒讚、`active` 且未中止、近 30 天（窗期固定，不收 `days`）；其餘一律 404、不分是否存在。`kinds` 是它在哪幾種佇列裡。每次讀取在同一筆交易寫一列 `admin_audit_log`（`qa_content.read`，detail 只有 `qa_id` 與 `kinds`），稽核寫不進去就不回內容；回應 `Cache-Control: no-store` |
 | GET | `/api/admin/users` | — | `{items: [{id, username, role, enabled, created_at, updated_at, password_changed_at, last_login_at, last_seen_at, active_sessions, is_super, scopes, totp_enabled, deletion_execute_after}]}` | `accounts.manage`。不含任何密碼衍生值；`scopes` 只列另外授予的；`deletion_execute_after` 只在有尚未執行的刪除排程時有值 |
-| POST | `/api/admin/users` | JSON `username`（2–64 字元，文字、數字與 `. _ @ -`，不分大小寫唯一）、`password`（10–256 字元、前後不可空白）、`role`（`admin`／`user`，預設 `user`） | 201 帳號一列 | `accounts.manage`。400 輸入不合法、409 帳號已存在 |
+| POST | `/api/admin/users` | JSON `username`（Email 格式 `name@example.com`、最多 254 字元，不分大小寫唯一）、`password`（8–256 字元、同時含英文字母與數字、可含特殊符號、前後不可空白）、`role`（`admin`／`user`，預設 `user`） | 201 帳號一列 | `accounts.manage`。400 輸入不合法、409 帳號已存在 |
 | PATCH | `/api/admin/users/{user_id}` | JSON `role`、`enabled`（至少一個） | 帳號一列 | `accounts.manage`。停用時撤銷該帳號所有 session；409：最後一位啟用中的管理員不能停用或降級、不能停用自己或拿掉自己的管理員權限；404 帳號不存在 |
 | POST | `/api/admin/users/bulk` | JSON `action`（`disable`／`enable`／`logout`）、`user_ids`（1–100 個，重複只算一次） | `{action, requested, ok, unchanged, skipped, results: [{user_id, status, code, detail, revoked_sessions}]}`（`status`：`ok`／`unchanged`／`skipped`） | `accounts.manage`＋近 10 分鐘內重新驗證過（403 `elevation_required`）。逐筆套用單筆停用／啟用／強制登出的規則，被擋的逐筆 `skipped`、`code` 與單筆相同（`self_lockout`、`last_admin`、`last_super`、`super_required`、`deletion_pending`、`not_found`、`account_deleted`）；已是目標狀態 `unchanged`（不寫稽核）。整批同一筆交易，「最後一位」的計數看得到同一批前面已做的變更；批次強制登出不含自己。每筆變更各寫一筆稽核（與單筆同形，`via=web_bulk`），至少一筆成功時另寫一筆摘要 `user.bulk_action`；空清單、超過上限 422 |
 | POST | `/api/admin/users/{user_id}/password` | JSON `password` | 帳號一列 | `accounts.manage`。重設密碼並撤銷該帳號所有 session |
@@ -360,7 +360,7 @@ make eval-gate PROFILE=<profile> RESULT=<結果.json>   # 上線驗收（零 LLM
 ```
 
 - CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：前端測試（tsc + vitest）、後端測試（pytest）、schema 契約（PostgreSQL）、secret 掃描（gitleaks）。測試的規則（不連網、不載模型、假物件、DB 契約測試、不可寫 repo 根的環境檔）、改動對照表與契約類測試的處理原則都在 `AGENTS.md`。
-- 評測 `eval/` 刻意不進 CI（會呼叫付費 API；CI 不連網）。`make eval-compare` 退出碼是結論：0 無劣化、1 劣化、2 不可比、3 有未分類指標。門檻 F>0.9／CP>0.8／AR>0.55 是政策。
+- 評測 `eval/` 刻意不進 CI（會呼叫付費 API；CI 不連網）。`make eval-compare` 退出碼是結論：0 無劣化、1 劣化、2 不可比、3 有未分類指標。門檻 F>0.9／CP>0.8／AR>0.55 是政策。問答結果另記三個完整度指標（零 LLM）：每題陳述句數 `statements_mean`（faithfulness 拆出的陳述句）、引用到的不同研報數 `cited_reports_mean`、去掉空白與 markdown 標記後的字數 `answer_chars_mean`；只有 `statements_mean` 列入判定（越多越好、相對容忍 25%），另兩項只列出。
 - 其他券商導入時建自己的凍結題集（`scripts/draft_eval_questions.py`：LLM 草擬 → 研究員審 → 凍結，放在 `profiles/<名稱>/eval/`），評測入口帶 `--profile` 讀它、以 `make eval-gate` 做上線驗收；不帶 `--profile` 時一切照舊。流程見 `docs/WORKFLOW.md`「導入驗收」。
 - 問答基準線：問答主答的正式設定是 `gpt-6-luna`＋推理 `medium`（正式環境設 `ASK_ANSWER_REASONING=medium`；程式預設 `none`），對應的基準線是 `eval/baselines/baseline-2026-11-23-jluna-gluna-medium-topical-rerank.json`（現行主答 prompt；量尺系譜 `gpt-6-luna-2026-11`，開 rerank，18 題每題 3 次，F=0.938、CP=0.916、AR=0.691，三項過門檻；跑法要帶 `--generator-reasoning medium`），語料是開發資料庫的固定快照（`devdb-2026-10-28:md5:3030a8008c760885c1b6630ddc83ecc7`，即 `research_report.file_hash` 依序以逗號串接後的 md5）。主答 prompt 改版前的 `eval/baselines/baseline-2026-11-18-jluna-gluna-medium-rerank.json`（F=0.921、CP=0.871、AR=0.687），以及同系譜、同語料、生成端推理 `none` 的 `eval/baselines/baseline-2026-11-10-jluna-gluna-rerank.json`（F=0.941、CP=0.798、AR=0.687）與 `eval/baselines/baseline-2026-11-02-jluna-gluna-rerank.json`（F=0.917、CP=0.780、AR=0.674）可直接比。開發資料庫停在 revision 0008，現行程式的檢索要用 0012 的 `doc_type`：評測時以它為 template 建一個拋棄式資料庫、`upgrade head` 後只連那份（語料雜湊不變，用完 DROP）。`eval/baselines/` 裡其他的舊基準線是歷史紀錄，與現行 judge 不可比（`eval-compare` 回 2）。`eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（舊系譜 `deepseek-2026-09`，18 題每題 3 次，F=0.967、CP=0.873、AR=0.691）用的語料是 2026-09-29 從辦公室主機凍結的快照：15,255 份研報／616,769 個 chunk，快照 ID `sha256:969ba5277b99fb57d05262d19ceeb9fffe813c2f2ac7e0cc9ab6c87a7768373d`。評測設定是 `rerank_top_m=0`、`agentic=false`，只量固定脈絡下的答案品質；線上含重排與補查的整體延遲另用 `scripts/bench_load.py` 走 HTTP 量。快照原檔和含研報片段的檢查點留在未版控的資料目錄，版控只保留摘要分數與設定。`eval/ragas_questions.json` 是凍結題集，改題集就失去與基準線的可比性。
 
@@ -388,7 +388,7 @@ make eval-gate PROFILE=<profile> RESULT=<結果.json>   # 上線驗收（零 LLM
 框架的官方部署形態是容器（下一節）；廷豐兩台主機的 systemd 部署見[廷豐 profile 與現行部署](#廷豐-profile-與現行部署)。兩種形態共用下面幾件事：
 
 - **Schema** 由 Alembic 管理（0009 留空不用）：`make schema` 跑 `alembic upgrade head`（連 `REPORT_MARK_DB_URL`；已有資料的庫要 `CONFIRM=<host:port/db>` 逐字確認目標）。`db/schema.sql` 是凍結的 baseline（revision 0001），只接受空庫；之後的變更寫在 `db/migrations/versions/`。`make schema-version` 只比 DB 版本與程式 head（唯讀），`make schema-check` 做完整 drift 比對。把還沒 stamp 的既有庫納入 Alembic 的步驟見 `AGENTS.md` 改動對照表。
-- **帳號**：第一位管理員用 `uv run python scripts/create_admin.py --username <名稱>` 建立，其餘在管理後台「帳號管理」建。忘記密碼或管理員全被停用時 `--reset-password`，遺失驗證器 `--reset-totp`。`app_user` 進了備份（含 Argon2id 雜湊），備份檔要當機密看待。
+- **帳號**：第一位管理員用 `uv run python scripts/create_admin.py --username <Email>` 建立，其餘在管理後台「帳號管理」建。忘記密碼或管理員全被停用時 `--reset-password`，遺失驗證器 `--reset-totp`。`app_user` 進了備份（含 Argon2id 雜湊），備份檔要當機密看待。
 
 ### 容器部署（docker compose）
 

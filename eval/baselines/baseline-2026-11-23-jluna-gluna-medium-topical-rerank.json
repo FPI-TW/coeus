@@ -21,6 +21,9 @@
     "n_effective_answer_relevancy": 18,
     "judged_ids_sha": "b4ec1b78ce3cb01086b58520bf889a60ceb58d4844851ada3efa130603332c12",
     "citation_rate": 1.0,
+    "statements_mean": 88.37037037037038,
+    "cited_reports_mean": 8.981481481481481,
+    "answer_chars_mean": 1657.0370370370372,
     "simplified_residual_rate": 0.0,
     "n_truncated": 0,
     "thresholds_pass": true,
@@ -105,6 +108,9 @@
         "reasoning": 1661
       },
       "cited": 1.0,
+      "statements": 62.333333333333336,
+      "cited_reports": 8.0,
+      "answer_chars": 1185.0,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -136,7 +142,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 62,
+          "cited_reports": 10,
+          "answer_chars": 1133
         },
         {
           "id": "q001",
@@ -164,7 +173,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 80,
+          "cited_reports": 9,
+          "answer_chars": 1343
         },
         {
           "id": "q001",
@@ -192,7 +204,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 45,
+          "cited_reports": 5,
+          "answer_chars": 1079
         }
       ]
     },
@@ -211,6 +226,9 @@
         "reasoning": 817
       },
       "cited": 1.0,
+      "statements": 72.66666666666667,
+      "cited_reports": 7.333333333333333,
+      "answer_chars": 1224.6666666666667,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -242,7 +260,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 69,
+          "cited_reports": 7,
+          "answer_chars": 1119
         },
         {
           "id": "q002",
@@ -270,7 +291,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 77,
+          "cited_reports": 8,
+          "answer_chars": 1340
         },
         {
           "id": "q002",
@@ -298,7 +322,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 72,
+          "cited_reports": 7,
+          "answer_chars": 1215
         }
       ]
     },
@@ -317,6 +344,9 @@
         "reasoning": 600
       },
       "cited": 1.0,
+      "statements": 58.666666666666664,
+      "cited_reports": 3.0,
+      "answer_chars": 888.3333333333334,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -348,7 +378,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 49,
+          "cited_reports": 3,
+          "answer_chars": 803
         },
         {
           "id": "q003",
@@ -376,7 +409,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 67,
+          "cited_reports": 3,
+          "answer_chars": 911
         },
         {
           "id": "q003",
@@ -404,7 +440,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 60,
+          "cited_reports": 3,
+          "answer_chars": 951
         }
       ]
     },
@@ -423,6 +462,9 @@
         "reasoning": 1509
       },
       "cited": 1.0,
+      "statements": 87.0,
+      "cited_reports": 10.333333333333334,
+      "answer_chars": 1910.0,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -454,7 +496,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 102,
+          "cited_reports": 10,
+          "answer_chars": 1970
         },
         {
           "id": "q004",
@@ -482,7 +527,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 68,
+          "cited_reports": 10,
+          "answer_chars": 1815
         },
         {
           "id": "q004",
@@ -510,7 +558,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 91,
+          "cited_reports": 11,
+          "answer_chars": 1945
         }
       ]
     },
@@ -529,6 +580,9 @@
         "reasoning": 2347
       },
       "cited": 1.0,
+      "statements": 147.0,
+      "cited_reports": 14.666666666666666,
+      "answer_chars": 2825.0,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -560,7 +614,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 153,
+          "cited_reports": 15,
+          "answer_chars": 2789
         },
         {
           "id": "q005",
@@ -588,7 +645,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 146,
+          "cited_reports": 14,
+          "answer_chars": 2946
         },
         {
           "id": "q005",
@@ -616,7 +676,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 142,
+          "cited_reports": 15,
+          "answer_chars": 2740
         }
       ]
     },
@@ -635,6 +698,9 @@
         "reasoning": 1868
       },
       "cited": 1.0,
+      "statements": 74.33333333333333,
+      "cited_reports": 8.333333333333334,
+      "answer_chars": 1381.6666666666667,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -666,7 +732,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 74,
+          "cited_reports": 8,
+          "answer_chars": 1248
         },
         {
           "id": "q006",
@@ -694,7 +763,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 64,
+          "cited_reports": 9,
+          "answer_chars": 1358
         },
         {
           "id": "q006",
@@ -722,7 +794,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 85,
+          "cited_reports": 8,
+          "answer_chars": 1539
         }
       ]
     },
@@ -741,6 +816,9 @@
         "reasoning": 1661
       },
       "cited": 1.0,
+      "statements": 147.0,
+      "cited_reports": 15.0,
+      "answer_chars": 2249.3333333333335,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -772,7 +850,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 124,
+          "cited_reports": 15,
+          "answer_chars": 2065
         },
         {
           "id": "q007",
@@ -800,7 +881,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 170,
+          "cited_reports": 15,
+          "answer_chars": 2478
         },
         {
           "id": "q007",
@@ -828,7 +912,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 147,
+          "cited_reports": 15,
+          "answer_chars": 2205
         }
       ]
     },
@@ -847,6 +934,9 @@
         "reasoning": 2176
       },
       "cited": 1.0,
+      "statements": 55.0,
+      "cited_reports": 8.666666666666666,
+      "answer_chars": 1328.6666666666667,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -878,7 +968,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 63,
+          "cited_reports": 9,
+          "answer_chars": 1465
         },
         {
           "id": "q008",
@@ -906,7 +999,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 55,
+          "cited_reports": 8,
+          "answer_chars": 1326
         },
         {
           "id": "q008",
@@ -934,7 +1030,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 47,
+          "cited_reports": 9,
+          "answer_chars": 1195
         }
       ]
     },
@@ -953,6 +1052,9 @@
         "reasoning": 1546
       },
       "cited": 1.0,
+      "statements": 112.33333333333333,
+      "cited_reports": 13.333333333333334,
+      "answer_chars": 1895.6666666666667,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -984,7 +1086,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 126,
+          "cited_reports": 14,
+          "answer_chars": 2063
         },
         {
           "id": "q009",
@@ -1012,7 +1117,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 127,
+          "cited_reports": 14,
+          "answer_chars": 2197
         },
         {
           "id": "q009",
@@ -1040,7 +1148,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 84,
+          "cited_reports": 12,
+          "answer_chars": 1427
         }
       ]
     },
@@ -1059,6 +1170,9 @@
         "reasoning": 1635
       },
       "cited": 1.0,
+      "statements": 123.66666666666667,
+      "cited_reports": 14.0,
+      "answer_chars": 2255.3333333333335,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -1090,7 +1204,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 134,
+          "cited_reports": 14,
+          "answer_chars": 2251
         },
         {
           "id": "q010",
@@ -1118,7 +1235,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 134,
+          "cited_reports": 14,
+          "answer_chars": 2490
         },
         {
           "id": "q010",
@@ -1146,7 +1266,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 103,
+          "cited_reports": 14,
+          "answer_chars": 2025
         }
       ]
     },
@@ -1165,6 +1288,9 @@
         "reasoning": 1348
       },
       "cited": 1.0,
+      "statements": 64.66666666666667,
+      "cited_reports": 8.666666666666666,
+      "answer_chars": 1423.6666666666667,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -1196,7 +1322,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 68,
+          "cited_reports": 9,
+          "answer_chars": 1305
         },
         {
           "id": "q011",
@@ -1224,7 +1353,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 58,
+          "cited_reports": 7,
+          "answer_chars": 1374
         },
         {
           "id": "q011",
@@ -1252,7 +1384,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 68,
+          "cited_reports": 10,
+          "answer_chars": 1592
         }
       ]
     },
@@ -1271,6 +1406,9 @@
         "reasoning": 1395
       },
       "cited": 1.0,
+      "statements": 96.33333333333333,
+      "cited_reports": 10.0,
+      "answer_chars": 2009.0,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -1302,7 +1440,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 96,
+          "cited_reports": 10,
+          "answer_chars": 1884
         },
         {
           "id": "q012",
@@ -1330,7 +1471,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 67,
+          "cited_reports": 10,
+          "answer_chars": 2035
         },
         {
           "id": "q012",
@@ -1358,7 +1502,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 126,
+          "cited_reports": 10,
+          "answer_chars": 2108
         }
       ]
     },
@@ -1377,6 +1524,9 @@
         "reasoning": 2206
       },
       "cited": 1.0,
+      "statements": 144.0,
+      "cited_reports": 13.333333333333334,
+      "answer_chars": 2698.6666666666665,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -1408,7 +1558,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 148,
+          "cited_reports": 14,
+          "answer_chars": 2683
         },
         {
           "id": "q013",
@@ -1436,7 +1589,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 134,
+          "cited_reports": 14,
+          "answer_chars": 2318
         },
         {
           "id": "q013",
@@ -1464,7 +1620,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 150,
+          "cited_reports": 12,
+          "answer_chars": 3095
         }
       ]
     },
@@ -1483,6 +1642,9 @@
         "reasoning": 2591
       },
       "cited": 1.0,
+      "statements": 110.66666666666667,
+      "cited_reports": 7.666666666666667,
+      "answer_chars": 2025.3333333333333,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -1514,7 +1676,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 107,
+          "cited_reports": 7,
+          "answer_chars": 1879
         },
         {
           "id": "q014",
@@ -1542,7 +1707,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 114,
+          "cited_reports": 8,
+          "answer_chars": 2149
         },
         {
           "id": "q014",
@@ -1570,7 +1738,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 111,
+          "cited_reports": 8,
+          "answer_chars": 2048
         }
       ]
     },
@@ -1589,6 +1760,9 @@
         "reasoning": 1493
       },
       "cited": 1.0,
+      "statements": 103.33333333333333,
+      "cited_reports": 5.0,
+      "answer_chars": 1628.6666666666667,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -1620,7 +1794,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 114,
+          "cited_reports": 5,
+          "answer_chars": 1770
         },
         {
           "id": "q015",
@@ -1648,7 +1825,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 99,
+          "cited_reports": 7,
+          "answer_chars": 1587
         },
         {
           "id": "q015",
@@ -1676,7 +1856,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 97,
+          "cited_reports": 3,
+          "answer_chars": 1529
         }
       ]
     },
@@ -1695,6 +1878,9 @@
         "reasoning": 879
       },
       "cited": 1.0,
+      "statements": 92.0,
+      "cited_reports": 3.0,
+      "answer_chars": 1741.0,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -1726,7 +1912,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 86,
+          "cited_reports": 3,
+          "answer_chars": 1684
         },
         {
           "id": "q016",
@@ -1754,7 +1943,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 96,
+          "cited_reports": 3,
+          "answer_chars": 1855
         },
         {
           "id": "q016",
@@ -1782,7 +1974,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 94,
+          "cited_reports": 3,
+          "answer_chars": 1684
         }
       ]
     },
@@ -1801,6 +1996,9 @@
         "reasoning": 542
       },
       "cited": 1.0,
+      "statements": 8.0,
+      "cited_reports": 6.333333333333333,
+      "answer_chars": 298.3333333333333,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -1832,7 +2030,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 7,
+          "cited_reports": 6,
+          "answer_chars": 269
         },
         {
           "id": "q017",
@@ -1860,7 +2061,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 10,
+          "cited_reports": 7,
+          "answer_chars": 324
         },
         {
           "id": "q017",
@@ -1888,7 +2092,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 7,
+          "cited_reports": 6,
+          "answer_chars": 302
         }
       ]
     },
@@ -1907,6 +2114,9 @@
         "reasoning": 1822
       },
       "cited": 1.0,
+      "statements": 31.666666666666668,
+      "cited_reports": 5.0,
+      "answer_chars": 858.3333333333334,
       "simplified": 0.0,
       "gen_truncated": false,
       "n_runs": 3,
@@ -1941,7 +2151,10 @@
           "gen_truncated": false,
           "judge_errors": {
             "faithfulness": "JudgeSchemaError: 缺 idx [38]（共 1 個）"
-          }
+          },
+          "statements": 39,
+          "cited_reports": 5,
+          "answer_chars": 905
         },
         {
           "id": "q018",
@@ -1969,7 +2182,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 28,
+          "cited_reports": 5,
+          "answer_chars": 878
         },
         {
           "id": "q018",
@@ -1997,7 +2213,10 @@
           },
           "cited": true,
           "simplified": false,
-          "gen_truncated": false
+          "gen_truncated": false,
+          "statements": 28,
+          "cited_reports": 5,
+          "answer_chars": 792
         }
       ]
     }

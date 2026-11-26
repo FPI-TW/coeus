@@ -123,6 +123,13 @@ _MAX_USER_AGENT = 300
 # 帳號名稱：2–64 個字元，只允許文字、數字與 `._@-`（\w 含中文）。不允許空白與控制字元：
 # 登入表單看不出前後空白，日誌與管理頁也無從分辨。
 _USERNAME_RE = re.compile(r"^[\w.@-]{2,64}$")
+# 本機建帳（管理頁、CLI）的帳號一律是 Email：local@domain.tld，只收 ASCII，總長 ≤ 254（RFC 5321）。
+# SSO 首次登入的 JIT 建帳仍走 `_USERNAME_RE`：IdP 給的名稱不一定是 Email，改了會把人擋在門外。
+# 既有的非 Email 帳號照常登入（登入不驗格式）。
+_EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$"
+)
+MAX_EMAIL_LENGTH = 254
 
 
 @dataclass(frozen=True)
@@ -420,6 +427,13 @@ def normalize_username(username: str) -> str:
 def username_problem(username: str) -> str | None:
     if not _USERNAME_RE.fullmatch(username or ""):
         return "帳號需為 2–64 個字元，只能包含文字、數字與 . _ @ -"
+    return None
+
+
+def new_username_problem(username: str) -> str | None:
+    """本機建帳的帳號規則（Email 格式）；合規回 None。"""
+    if len(username or "") > MAX_EMAIL_LENGTH or not _EMAIL_RE.fullmatch(username or ""):
+        return "帳號需為 Email 格式，例如 name@example.com"
     return None
 
 
@@ -1139,7 +1153,7 @@ async def create_user(username: str, password: str, role: str = "user", *,
                       actor_id: str | None, via: str = "web", is_super: bool = False) -> UserInfo:
     """is_super=True 只給 CLI 與 super admin（建第一位管理員、救援）。"""
     name = normalize_username(username)
-    problem = username_problem(name)
+    problem = new_username_problem(name)
     if problem:
         raise InvalidInputError(problem)
     _check_role(role)

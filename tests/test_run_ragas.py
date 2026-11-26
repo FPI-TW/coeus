@@ -723,6 +723,71 @@ class AggregateNewMetricsTests(unittest.TestCase):
         self.assertEqual(agg["n_judge_errors"], 0)
 
 
+def _io(answer: str, contexts: list[str], judge_calls: list[dict] | None = None) -> dict:
+    return {"question": "題", "filters": {}, "context": "\n\n".join(contexts), "contexts": contexts,
+            "answer": answer, "judge_calls": judge_calls or []}
+
+
+class CompletenessMetricsTests(unittest.TestCase):
+    """完整度三指標（零 LLM）：陳述句數、引用到的不同研報數、去掉標記後的字數。"""
+
+    CONTEXTS = [
+        "[1] 報告：a.pdf（市場 TW，日期 2026-01-01）\n段落一",
+        "[2] 報告：b（上）.pdf（市場 US，日期 2026-02-02）\n段落二",
+        "[3] 報告：a.pdf（市場 TW，日期 2026-01-01）\n同一份研報的另一個片段",
+        "[4] 報告：c.pdf\n沒有市場與日期",
+    ]
+
+    def test_cited_reports_dedupes_by_report_and_ignores_unknown_numbers(self):
+        m = rr.completeness_metrics(_io("甲 [1] 乙 [3] 丙 [2][2] 丁 [4] 戊 [9]", self.CONTEXTS))
+        self.assertEqual(m["cited_reports"], 3)   # [1][3] 同一份 a.pdf；[9] 對應不到不算
+        self.assertEqual(rr.completeness_metrics(_io("沒有引用", self.CONTEXTS))["cited_reports"], 0)
+
+    def test_header_file_name_keeps_parentheses_in_the_name(self):
+        m = rr.completeness_metrics(_io("[2]", ["[2] 報告：b（上）.pdf（市場 US，日期 2026-02-02）\nx",
+                                              "[5] 報告：b（下）.pdf（市場 US，日期 2026-02-02）\ny"]))
+        self.assertEqual(m["cited_reports"], 1)
+        m = rr.completeness_metrics(_io("[2][5]", ["[2] 報告：b（上）.pdf（市場 US，日期 2026-02-02）\nx",
+                                                  "[5] 報告：b（下）.pdf（市場 US，日期 2026-02-02）\ny"]))
+        self.assertEqual(m["cited_reports"], 2)  # 檔名裡的括號不能被當成市場／日期段截掉
+
+    def test_answer_chars_strips_whitespace_markdown_and_citation_marks(self):
+        answer = "### 標題\n\n**結論：**營收 2026-07 成長 [1][2]\n- 第一點\n  - 子項\n> 引言\n---\n"
+        m = rr.completeness_metrics(_io(answer, self.CONTEXTS))
+        self.assertEqual(m["answer_chars"], len("標題結論：營收2026-07成長第一點子項引言"))  # 文中的 - 保留
+
+    def test_statements_come_from_the_last_decompose_call(self):
+        calls = [
+            {"task": "decompose", "response": {"statements": "不合 schema"}},
+            {"task": "decompose", "response": {"statements": ["一", "二", "  "]}},
+            {"task": "ground", "response": {"verdicts": []}},
+        ]
+        self.assertEqual(rr.completeness_metrics(_io("答", self.CONTEXTS, calls))["statements"], 2)
+
+    def test_statements_none_when_decompose_failed_or_missing(self):
+        failed = [{"task": "decompose", "error": "JudgeError: timeout"}]
+        bad = [{"task": "decompose", "response": {"statements": "一段話"}}]
+        for calls in (failed, bad, [], [{"task": "context_precision", "response": {}}]):
+            self.assertIsNone(rr.completeness_metrics(_io("答", self.CONTEXTS, calls))["statements"], calls)
+        empty = [{"task": "decompose", "response": {"statements": []}}]
+        self.assertEqual(rr.completeness_metrics(_io("答", self.CONTEXTS, empty))["statements"], 0)
+
+    def test_aggregate_and_merge_average_skipping_none(self):
+        merged = rr.merge_repeats([
+            _run(id="q1", statements=10, cited_reports=3, answer_chars=100),
+            _run(id="q1", statements=None, cited_reports=5, answer_chars=200),
+            _run(id="q1", error="boom"),
+        ])
+        self.assertEqual((merged["statements"], merged["cited_reports"], merged["answer_chars"]), (10.0, 4.0, 150.0))
+        agg = aggregate([merged, _run(id="q2", statements=20, cited_reports=2, answer_chars=50),
+                         _run(id="q3", statements=None), {"id": "q4", "error": "x", "statements": 99}])
+        self.assertAlmostEqual(agg["statements_mean"], 15.0)
+        self.assertAlmostEqual(agg["cited_reports_mean"], 3.0)
+        self.assertAlmostEqual(agg["answer_chars_mean"], 100.0)
+        old = aggregate([_run()])  # 舊 case 沒有這些欄位
+        self.assertIsNone(old["statements_mean"])
+
+
 def _run(**kw):
     base = {
         "id": "q1", "question": "題", "faithfulness": 1.0, "context_precision": 0.5,
@@ -969,6 +1034,38 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
                     await rr.run(ds, out_path=output, concurrency=1, rerank_top_m=2,
                                  checkpoint_dir=checkpoints)
                 self.assertEqual(calls, ["q001", "q002", "q002"])
+
+    async def test_completeness_is_computed_from_checkpointed_io(self):
+        """檢查點只存 result（帶 _io）；續跑時三個完整度欄位照樣從 _io 算出，不重打付費呼叫。"""
+        with tempfile.TemporaryDirectory() as td:
+            questions = [{"id": "q001", "question": "台積電營運展望如何", "filters": {}, "scope": "corpus_qa"}]
+            ds = Path(td) / "questions.json"
+            ds.write_text(json.dumps({"version": 2, "generated_at": "2026-09-29T00:00:00+08:00",
+                                      "count": 1, "questions": questions}, ensure_ascii=False), encoding="utf-8")
+            checkpoints = Path(td) / "checkpoints"
+            io_ = _io("**結論** [1][2]", ["[1] 報告：a.pdf（市場 TW，日期 2026-01-01）\nx",
+                                         "[2] 報告：b.pdf（市場 TW，日期 2026-01-02）\ny"],
+                      [{"task": "decompose", "response": {"statements": ["一", "二", "三"]}}])
+            expected = {"statements": 3, "cited_reports": 2, "answer_chars": 2}
+
+            async def fake_eval(q, **kwargs):
+                return {**_run(id=q["id"], question=q["question"]), "_io": io_}
+
+            with mock.patch.object(rr, "eval_question", fake_eval):
+                first = await rr.run(ds, out_path=None, concurrency=1, repeat=2, checkpoint_dir=checkpoints)
+            saved = json.loads((checkpoints / "q001-r1.json").read_text(encoding="utf-8"))
+            self.assertIn("_io", saved["result"])
+
+            async def must_not_run(q, **kwargs):
+                raise AssertionError("續跑不該重打")
+
+            with mock.patch.object(rr, "eval_question", must_not_run):
+                resumed = await rr.run(ds, out_path=None, concurrency=1, repeat=2, checkpoint_dir=checkpoints)
+        for report in (first, resumed):
+            case = report["cases"][0]
+            self.assertEqual({k: case["runs"][0][k] for k in expected}, expected)
+            self.assertEqual({k: case[k] for k in expected}, {k: float(v) for k, v in expected.items()})
+            self.assertEqual(report["summary"]["statements_mean"], 3.0)
 
     def test_judge_observation_merges_across_checkpoint_runs(self):
         observer = rr._JudgeObserver()

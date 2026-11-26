@@ -3,7 +3,7 @@ import { FormDialog, Field, FieldGroup, Segmented, type SegOption } from '../../
 import type { Role } from '../../../lib/adminSchemas'
 import { roleLabel } from '../auditLabels'
 import { useAdminActions } from '../useAdmin'
-import { MIN_PASSWORD, messageOf, passwordProblem, usernameProblem } from './userText'
+import { MAX_USERNAME, MIN_PASSWORD, messageOf, passwordProblem, usernameProblem } from './userText'
 import c from '../../../components/console/Console.module.css'
 import { t } from '@/i18n'
 
@@ -38,7 +38,7 @@ export function CreateUserDialog({ onClose, onDone }: { onClose: () => void; onD
     <FormDialog open title={t('admin.users.createUserDialog.createAccount')} width={440} submitLabel={create.isPending ? t('admin.users.createUserDialog.creating') : t('admin.users.createUserDialog.create')}
       busy={create.isPending} error={error} onSubmit={submit} onClose={onClose}>
       <Field label={t('admin.users.createUserDialog.username')}>
-        <input className={`${c.input} ${c.inputMono}`} value={username} autoComplete="off" spellCheck={false} maxLength={64}
+        <input className={`${c.input} ${c.inputMono}`} value={username} inputMode="email" autoComplete="off" spellCheck={false} maxLength={MAX_USERNAME}
           onChange={e => { setUsername(e.target.value); setError(null) }} />
       </Field>
       <Field label={t('admin.users.createUserDialog.initialPassword')}>
@@ -50,7 +50,7 @@ export function CreateUserDialog({ onClose, onDone }: { onClose: () => void; onD
         <div><Segmented options={ROLE_OPTIONS} value={role} onChange={setRole} label={t('admin.users.createUserDialog.role')} /></div>
       </FieldGroup>
       <p className={c.fieldHint}>
-        {t('admin.users.createUserDialog.usernamesAre264Characters', { MIN_PASSWORD })}
+        {t('admin.users.createUserDialog.usernameIsEmail', { MIN_PASSWORD })}
       </p>
     </FormDialog>
   )
