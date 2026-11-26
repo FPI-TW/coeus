@@ -253,7 +253,7 @@ class BindingTests(unittest.TestCase):
 
 
 class StagingCatalogTests(unittest.TestCase):
-    """EC2（正式環境；catalog 檔名沿用 staging）：RDS（不是容器）、沒有 NAS、apt 的 nginx。
+    """EC2（正式環境；catalog 檔名沿用 staging）：RDS（不是容器）、沒有 NAS（備份落點是本機磁碟）、apt 的 nginx。
 
     restart 只有 web，run 只有 freshness／audit 與 v2 的 db-snapshot／analytics-rollup。
     """
@@ -277,9 +277,13 @@ class StagingCatalogTests(unittest.TestCase):
     def test_staging_has_no_office_only_things(self):
         staging = load_catalog(STAGING_TOML, resolve_user=_uid)
         names = {s.name for s in staging.services} | {e.name for e in staging.externals}
-        for absent in ("postgres", "cloudflared", "backup", "nas", "linebot", "linebot-health", "metrics"):
+        for absent in ("postgres", "cloudflared", "nas", "linebot", "linebot-health", "metrics"):
             self.assertNotIn(absent, names)
         self.assertIn("rds", names)
+        # 備份與錨點寫 EC2 本機磁碟（沒有 NAS）：只依賴 rds，且唯讀（polkit 的 staging 沒有 backup 的 start）。
+        for name in ("backup", "audit-anchor"):
+            self.assertEqual(staging.get(name).depends_on, ("rds",))
+            self.assertEqual(staging.get(name).actions, ("status", "logs"))
         self.assertEqual(staging.get("nginx").unit, "nginx.service")
         systemd_dir = REPO_ROOT / "deploy" / "systemd"
         missing = [t for s in staging.services for t in (s.unit, s.timer)

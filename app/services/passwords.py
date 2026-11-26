@@ -14,15 +14,19 @@ Argon2（數十毫秒）、「帳號不存在」立刻回，回應時間就把�
 
 from __future__ import annotations
 
+import re
+
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 _HASHER = PasswordHasher()
 
-# 密碼長度政策。下限：沒有複雜度規則（那只會逼出 `Password1!`），只要求夠長；上限：
-# Argon2 本身吃得下任意長度，擋的是有人送幾 MB 的字串讓每次驗證都很貴。
-MIN_PASSWORD_LENGTH = 10
+# 密碼政策：至少 8 個字元，且同時包含英文字母與數字；特殊符號可用但不強制。上限：Argon2
+# 本身吃得下任意長度，擋的是有人送幾 MB 的字串讓每次驗證都很貴。
+MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 256
+_HAS_LETTER = re.compile(r"[A-Za-z]")
+_HAS_DIGIT = re.compile(r"[0-9]")
 
 _DUMMY_HASH: str | None = None
 
@@ -36,6 +40,8 @@ def password_problem(password: str) -> str | None:
     if password.strip() != password:
         # 前後空白幾乎都是複製貼上帶進來的，登入時使用者不會記得要打。
         return "密碼前後不可有空白"
+    if not (_HAS_LETTER.search(password) and _HAS_DIGIT.search(password)):
+        return "密碼需同時包含英文字母與數字"
     return None
 
 

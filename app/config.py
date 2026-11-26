@@ -437,6 +437,9 @@ class Settings:
     ask_min_reports: int
     ask_stale_age_days: int
     ask_max_stale_reports: int
+    # 相對時間窗（天）：以通過相關度閘、日期最新的候選研報為基準，早於「基準日 − N 天」的研報不進主答脈絡；
+    # 0＝停用。問題明確問過去（answer.is_historical_question）時那一題不套用。見 answer.select_reports。
+    ask_relative_window_days: int
     # 使用者可否在問答開啟網搜（伺服器端總閘；關掉即使前端送 web=true 也不生效）。
     # 預設關：網搜沒有後端，開著只會讓時效題
     # 退回婉拒、開了網搜的主答以設定錯誤失敗（啟動自檢記 ERROR）。接上後端時才改回開。
@@ -663,6 +666,7 @@ def _load() -> Settings:
         ask_min_reports=int(os.getenv("ASK_MIN_REPORTS", "3")),
         ask_stale_age_days=int(os.getenv("ASK_STALE_AGE_DAYS", "180")),
         ask_max_stale_reports=int(os.getenv("ASK_MAX_STALE_REPORTS", "4")),
+        ask_relative_window_days=_int_at_least("ASK_RELATIVE_WINDOW_DAYS", 365, 0),
         ask_enable_web=_flag("ASK_ENABLE_WEB", "0"),
         ask_web_timeout=float(os.getenv("ASK_WEB_TIMEOUT", "240")),
         # 模型旋鈕一律經 llm_models.resolve_model：非空的任務旋鈕優先，否則查預設表；

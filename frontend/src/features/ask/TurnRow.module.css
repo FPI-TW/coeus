@@ -1,2 +1,8 @@
-.turn { margin-bottom: 36px; }
+.turn { position: relative; margin-bottom: 36px; }
+/* 這次思考過的最後一輪至少佔滿對話流的可見高度：送出後問題停在頂端，下面給思考中的大球置中。
+   扣掉 .turns 的上下留白（28px／170px，手機再加分頁列）；--ask-flow-h 由 AskPage 量對話流的高度。 */
+.fill {
+  display: flex; flex-direction: column;
+  min-height: calc(var(--ask-flow-h, 0px) - 198px - var(--ask-tabbar, 0px));
+}
 .turn:last-child { margin-bottom: 0; }

@@ -497,7 +497,7 @@ class FakeAccounts:
                           is_super=False) -> UserInfo:
         self._check()
         name = accounts.normalize_username(username)
-        problem = accounts.username_problem(name)
+        problem = accounts.new_username_problem(name)
         if problem:
             raise InvalidInputError(problem)
         if role not in accounts.ROLES:

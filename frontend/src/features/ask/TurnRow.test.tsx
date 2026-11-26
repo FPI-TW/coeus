@@ -96,3 +96,43 @@ test('中間輪失敗：原地重送會截掉後面的輪次，只好照舊新�
   expect(actions.submit).toHaveBeenCalledWith('Q')
   expect(actions.editResubmit).not.toHaveBeenCalled()
 })
+
+const section = (container: HTMLElement) => container.querySelector('section')!
+
+test('思考中：問題下方是置中大球＋目前步驟；開始寫答案就收掉', () => {
+  const thinking = makeTurn({ id: 'x', phase: 'thinking', stages: ['understanding', 'retrieved'], answer: '' })
+  const { container, rerender } = render(<Flow turns={[thinking]} />)
+  const hero = screen.getByTestId('thinking-hero')
+  expect(hero).toHaveTextContent('檢索研報…')
+  expect(hero.querySelector('canvas')).toHaveAttribute('data-orb-state', 'searching')
+  expect(hero.querySelector('canvas')).toHaveAttribute('aria-hidden', 'true')
+  rerender(<Flow turns={[{ ...thinking, phase: 'streaming', stages: ['understanding', 'retrieved', 'generating'] }]} />)
+  expect(screen.queryByTestId('thinking-hero')).toBeNull()
+  expect(section(container).className).toMatch(/fill/)
+})
+
+test('排隊中的大球：breathing＋名次，不跑計時', () => {
+  render(<Flow turns={[makeTurn({ phase: 'thinking', stages: [], answer: '', queuePosition: 3 })]} />)
+  const hero = screen.getByTestId('thinking-hero')
+  expect(hero.querySelector('canvas')).toHaveAttribute('data-orb-state', 'breathing')
+  expect(hero).toHaveTextContent('3')
+  expect(hero).not.toHaveTextContent('秒')
+})
+
+test('撐滿可見高度只給這次思考過的最後一輪：歷史輪不撐、新的一輪接手', () => {
+  const old = makeTurn({ id: 'old' })
+  const { container, rerender } = render(<Flow turns={[old]} />)
+  expect(section(container).className).not.toMatch(/fill/)
+  rerender(<Flow turns={[old, makeTurn({ id: 'new', phase: 'thinking', answer: '' })]} />)
+  const [first, second] = container.querySelectorAll('section')
+  expect(first.className).not.toMatch(/fill/)
+  expect(second.className).toMatch(/fill/)
+})
+
+test('重新生成歷史輪（回到思考中）之後也撐滿', () => {
+  const old = makeTurn({ id: 'old' })
+  const { container, rerender } = render(<Flow turns={[old]} />)
+  rerender(<Flow turns={[{ ...old, phase: 'thinking', answer: '' }]} />)
+  rerender(<Flow turns={[{ ...old, phase: 'done' }]} />)
+  expect(section(container).className).toMatch(/fill/)
+})

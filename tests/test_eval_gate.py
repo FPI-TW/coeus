@@ -63,13 +63,11 @@ class TingfongGateTests(unittest.TestCase):
         self.assertEqual(res.exit_code, 0, res.undecidable)
         self.assertEqual({m.status for m in res.metrics}, {gate.STATUS_PASS})
 
-    def test_cp_below_floor_is_waived_with_its_reason(self):
+    def test_cp_below_floor_fails_without_a_waiver(self):
         res = _evaluate(_result(cp=0.78))
-        self.assertEqual(res.exit_code, 0)
+        self.assertEqual(res.exit_code, 1)
         cp = next(m for m in res.metrics if m.metric == "context_precision")
-        self.assertEqual(cp.status, gate.STATUS_WAIVED)
-        self.assertIn("2026-11-10", cp.waiver)
-        self.assertIn("未過（豁免）", gate.render(res))
+        self.assertEqual(cp.status, gate.STATUS_FAIL)
 
     def test_unwaived_failure_is_1(self):
         for kwargs in ({"f": 0.9}, {"ar": 0.5}, {"f": 0.85, "cp": 0.5}):
@@ -155,6 +153,17 @@ class OtherProfileGateTests(unittest.TestCase):
         res = _evaluate(_result(cp=0.78, n=32, sha=self.sha, lineage="declared:Qwen/Qwen3-72B"), self.profile)
         self.assertEqual(res.exit_code, 1)
         self.assertEqual(_evaluate(_result(n=32, sha=self.sha, lineage="declared:x"), self.profile).exit_code, 0)
+
+    def test_waived_metric_below_floor_is_0_with_its_reason(self):
+        (self.profile / "eval" / pe.CONFIG_FILE).write_text(
+            '[gate.waivers.context_precision]\nreason = "示範 profile 的豁免理由寫得夠清楚"\ndecided_on = 2026-11-01\n',
+            encoding="utf-8")
+        res = _evaluate(_result(cp=0.78, n=32, sha=self.sha, lineage="declared:x"), self.profile)
+        self.assertEqual(res.exit_code, 0)
+        cp = next(m for m in res.metrics if m.metric == "context_precision")
+        self.assertEqual(cp.status, gate.STATUS_WAIVED)
+        self.assertIn("2026-11-01", cp.waiver)
+        self.assertIn("未過（豁免）", gate.render(res))
 
     def test_result_of_another_question_set_is_2(self):
         self.assertEqual(_evaluate(_result(n=32), self.profile).exit_code, 2)

@@ -214,7 +214,7 @@ async def run_agentic(
     decision: RouteDecision,
     first: tuple[list, str],
     filters: dict,
-    retrieval_params: dict,  # k/dense_scan/max_passages/max_chars/rerank_top_m/rerank_timeout
+    retrieval_params: dict,  # k/dense_scan/max_passages/max_chars/rerank_top_m/rerank_timeout/relative_window_days?
     timer=None,  # answer._StageTimer 相容（mark(name)）
     now=None,  # 注入時鐘（monotonic 相容 callable；測試決定性）
 ) -> AsyncIterator[tuple[str, object]]:
@@ -341,6 +341,8 @@ async def run_agentic(
                             rerank_timeout=min(
                                 retrieval_params["rerank_timeout"], remaining
                             ),
+                            # 與第一輪同一個時間窗（歷史題是 0）；沒帶＝ASK_RELATIVE_WINDOW_DAYS
+                            relative_window_days=retrieval_params.get("relative_window_days"),
                         ),
                         timeout=remaining,
                     )
