@@ -12,8 +12,8 @@
 
 - **只讀 `summary`，一個指標都不重算。** 重算等於在這裡複製一份評分規則，兩邊定義漂掉時
   比較器會理直氣壯地說謊。逐題資料仍在 `cases`，要下鑽請讀原始檔。唯一例外是使用者明講的
-  `--common-only`：只把 F／CP／AR 三個 judge 指標在「兩邊都有值的題目」上重取平均（run_ragas
-  的均值本來就是逐題分數的算術平均，逐題分數本身不重算），門檻旗標在該模式下不判定。
+  `--common-only`：只把 F／CP／AR 三個 judge 指標與完整度三指標（`statements_mean` 等）在「兩邊都有值的
+  題目」上重取平均（run_ragas 的均值本來就是逐題值的算術平均，逐題值本身不重算），門檻旗標在該模式下不判定。
 - **judge 指標的題目集合必須相同（退出碼 2）。** judge 出錯只讓該題該指標記 None（run_ragas
   M8），於是兩邊出錯題數相同、題目不同時，F／CP／AR 的均值是在不同題集上算的。summary 帶
   `n_effective_<指標>`（入均值的題數）與 `judged_ids_sha`（三個指標各自入均值的題目 id 集合的
@@ -119,6 +119,11 @@ METRIC_SPECS: dict[str, Spec] = {
     "n_effective_answer_relevancy": Spec(SAMPLE, ABS, "實際入 answer_relevancy 均值的題數"),
     "judged_ids_sha": Spec(SAMPLE, ABS, "三個 judge 指標各自入均值的題目 id 集合的雜湊"),
     "citation_rate": Spec(HIGHER, ABS, "答案至少引用一個存在來源 [n] 的題數比例"),
+    # 完整度（eval/run_ragas.py 的 completeness_metrics，零 LLM）。陳述句數是內容量的主訊號，列入判定；
+    # 引用研報數與字數隨脈絡篇數與寫法浮動、方向有歧義，只列出。
+    "statements_mean": Spec(HIGHER, REL, "faithfulness decompose 拆出的陳述句數（每題平均）"),
+    "cited_reports_mean": Spec(INFO, REL, "回答引用到的不同研報數（每題平均）"),
+    "answer_chars_mean": Spec(INFO, REL, "回答去掉空白、markdown 符號與 [n] 後的字數（每題平均）"),
     "simplified_residual_rate": Spec(LOWER, ABS, "答案整份被判為簡體（zh_hant.looks_simplified）的題數比例"),
     "n_truncated": Spec(LOWER, ABS, "生成撞到逾時、已吐的字被截斷的題數（stream_completion 回報）"),
     # 生成端首字時間與每題 token：成本與延遲的描述，只列出、不判方向（推理強度不同時本來就會變，判方向交給人）。
@@ -250,6 +255,8 @@ JUDGE_METRICS = ("faithfulness", "context_precision", "answer_relevancy")
 # 兩邊都有這些鍵才做題目集合的檢查與提示；只有一邊有時由「樣本數不同」照常擋下。
 _N_EFFECTIVE_KEYS = tuple(f"n_effective_{m}" for m in JUDGE_METRICS)
 _JUDGED_SET_KEYS = _N_EFFECTIVE_KEYS + ("judged_ids_sha",)
+# run_ragas 的完整度指標：summary 鍵 → case 欄位（`eval/run_ragas.py` 的 COMPLETENESS_KEYS）。
+COMPLETENESS_MEANS = {f"{k}_mean": k for k in ("statements", "cited_reports", "answer_chars")}
 
 
 def case_key(case: dict) -> str:
@@ -302,11 +309,13 @@ def judged_set_diff(base_doc: dict, cand_doc: dict) -> list[str]:
 
 
 def restrict_to_common(base_doc: dict, cand_doc: dict) -> tuple[dict, dict, list[str]]:
-    """`--common-only`：F／CP／AR 只在兩邊都有值的題目上重取平均。回（新 base, 新 cand, 說明）。
+    """`--common-only`：F／CP／AR 與完整度三指標（`COMPLETENESS_MEANS`）只在兩邊都有值的題目上重取平均。
+    回（新 base, 新 cand, 說明）。完整度指標只有一邊的 summary 有時不動，照缺鍵規則只列出、不判定。
 
     只重取平均、不重算逐題分數；run_ragas 的均值本來就是逐題值的算術平均（--repeat 時逐題
     值已是跨次平均）。門檻旗標（thresholds_pass／thresholds_failed）是在原題集上算的，
     這個模式下兩邊都移除、不判定。其餘指標（延遲、引用率、計數）照舊取 summary。
+    完整度指標不另記 n_effective_*、也不進 judged_ids_sha。
     缺 cases、或題目識別重複時拋 CompareError（無法可靠對齊）。
     """
     docs = []
@@ -332,6 +341,17 @@ def restrict_to_common(base_doc: dict, cand_doc: dict) -> tuple[dict, dict, list
             doc["summary"][f"n_effective_{m}"] = len(vals)
         common_sets[m] = sorted(common)
         notes.append(f"{m}：只取兩邊都有值的 {len(common)} 題重取平均")
+    for key, field_ in COMPLETENESS_MEANS.items():
+        if key not in base_doc["summary"] or key not in cand_doc["summary"]:
+            continue
+        common = set(judged_ids(base_doc["cases"], field_)) & set(judged_ids(cand_doc["cases"], field_))
+        for doc in (new_base, new_cand):
+            vals = [
+                float(c[field_]) for c in doc["cases"]
+                if isinstance(c, dict) and "error" not in c and c.get(field_) is not None and case_key(c) in common
+            ]
+            doc["summary"][key] = sum(vals) / len(vals) if vals else None
+        notes.append(f"{key}：只取兩邊都有值的 {len(common)} 題重取平均")
     # 兩邊的題目集合在此模式下相同；以共同集合重寫雜湊，兩邊逐字一致。
     common_sha = _sha_of_sets(common_sets)
     for doc in (new_base, new_cand):
@@ -774,13 +794,13 @@ def main(argv: list[str] | None = None) -> int:
         "--rel-tolerance",
         type=float,
         default=0.25,
-        help="相對容忍值（latency 等非 [0,1] 尺度指標），預設 0.25",
+        help="相對容忍值（latency、statements_mean 等非 [0,1] 尺度指標），預設 0.25",
     )
     parser.add_argument("--json", action="store_true", help="輸出機器可讀 JSON 而非對照表")
     parser.add_argument(
         "--common-only",
         action="store_true",
-        help="F／CP／AR 只在兩邊都有值的題目上重取平均（兩邊 judge 出錯的題目不同時用；門檻旗標不判定）",
+        help="F／CP／AR 與完整度指標只在兩邊都有值的題目上重取平均（兩邊 judge 出錯的題目不同時用；門檻旗標不判定）",
     )
     args = parser.parse_args(argv)
 
