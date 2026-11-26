@@ -118,7 +118,7 @@ class WindowTests(unittest.TestCase):
 
 
 class ProfileScheduleTests(unittest.TestCase):
-    """作息取自 profile 的 [brief]：廷豐是 9 時、24 小時、7 天（框架化之前寫死的值）；其他 profile 可以改。"""
+    """作息取自 profile 的 [brief]：預設是 9 時、24 小時、7 天（框架化之前寫死的值）；其他 profile 可以改。"""
 
     def _main_args(self, argv, brief=None):
         from app import profile as P
@@ -140,7 +140,7 @@ class ProfileScheduleTests(unittest.TestCase):
             sys.argv = old
         return captured["args"]
 
-    def test_tingfong_defaults(self):
+    def test_default_profile_schedule(self):
         args = self._main_args([])
         self.assertEqual((args.after_hour, args.max_lookback_days), (9, 7))
         self.assertEqual(generate_brief.resolve_window(None, NOW), (NOW - timedelta(hours=24), NOW))
@@ -567,8 +567,8 @@ class LabelTests(unittest.TestCase):
         self.assertEqual(rating_zh("weird"), "weird")
         self.assertEqual(market_zh("ZZ"), "ZZ")
 
-    def test_tingfong_uses_the_brief_vocabulary(self):
-        """廷豐沒有覆寫顯示名稱：簡報照用自己的詞表（刻意與介面的 MARKET_DISPLAY 不同，素材逐字不變）。"""
+    def test_default_profile_uses_the_brief_vocabulary(self):
+        """預設 profile 沒有覆寫顯示名稱：簡報照用自己的詞表（刻意與介面的 MARKET_DISPLAY 不同，素材逐字不變）。"""
         self.assertEqual({c: market_zh(c) for c in ("TW", "FX", "MACRO", "GLOBAL", "CRYPTO", "tw")},
                          {"TW": "台股", "FX": "匯市", "MACRO": "總體與債市", "GLOBAL": "全球與商品",
                           "CRYPTO": "加密資產", "tw": "台股"})

@@ -118,7 +118,12 @@ from app.services.tagging import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROFILE_DIR_ENV = "PROFILE_DIR"
+# 空字串＝沒有預設：`PROFILE_DIR` 必填，沒設就拋 ProfileError（`resolve_profile_dir`）。
 DEFAULT_PROFILE_DIR = "profiles/tingfong"
+PROFILE_DIR_REQUIRED = (
+    f"profile 設定錯誤：沒有設定 {PROFILE_DIR_ENV}。設成部署 profile 的目錄（裡面有 profile.toml，例如 "
+    f"{PROFILE_DIR_ENV}=profiles/demo；相對路徑以 repo 根為基準）"
+)
 PROFILE_FILE = "profile.toml"
 ASSETS_DIR = "assets"
 
@@ -945,8 +950,14 @@ def _parse_filenames(table: dict, ctx: _Ctx) -> Filenames:
 
 
 def resolve_profile_dir(raw: str | None = None) -> Path:
-    """`PROFILE_DIR` 的實際路徑：空值＝預設，相對路徑以 repo 根為基準（與工作目錄無關）。"""
+    """`PROFILE_DIR` 的實際路徑：空值＝預設，相對路徑以 repo 根為基準（與工作目錄無關）。
+
+    沒有預設（`DEFAULT_PROFILE_DIR` 是空字串）時空值拋 ProfileError：web 的 lifespan、LLM 批次的
+    `load_llm_env()` 與容器 entrypoint 都在第一步載入 profile，所以一律拒絕啟動。
+    """
     value = (os.getenv(PROFILE_DIR_ENV, "") if raw is None else raw).strip() or DEFAULT_PROFILE_DIR
+    if not value:
+        raise ProfileError(PROFILE_DIR_REQUIRED)
     path = Path(value)
     return path if path.is_absolute() else REPO_ROOT / path
 

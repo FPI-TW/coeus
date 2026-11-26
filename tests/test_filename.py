@@ -127,8 +127,8 @@ class _WithProfile(unittest.TestCase):
         return meta.stock_code, meta.company_name, [p for p in meta.matched_patterns if p.startswith(("NAME", "CODE"))]
 
 
-class TingfongStockCodeTests(_WithProfile):
-    """廷豐（＝section 缺席的框架預設）：正好 4 碼數字，行為與框架化之前的寫死正則逐字相同。"""
+class DefaultStockCodeTests(_WithProfile):
+    """預設 profile（＝section 缺席的框架預設）：正好 4 碼數字，行為與框架化之前的寫死正則逐字相同。"""
 
     PROFILE = REPO_ROOT / "profiles" / "tingfong"
 
@@ -214,8 +214,8 @@ class MixedDigitFormatsTests(_WithProfile):
 
 
 
-class TingfongAdminKeywordTests(_WithProfile):
-    """行政文件的檔名關鍵字來自 profile 的 `[filenames]`；廷豐宣告的是框架預設（框架化之前寫死的清單）。"""
+class DefaultAdminKeywordTests(_WithProfile):
+    """行政文件的檔名關鍵字來自 profile 的 `[filenames]`；預設 profile 宣告的是框架預設（框架化之前寫死的清單）。"""
 
     PROFILE = REPO_ROOT / "profiles" / "tingfong"
 

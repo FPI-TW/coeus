@@ -1,6 +1,6 @@
 """業務時區（profile 的 `[locale].timezone`，`app/services/business_time.py`）。
 
-- 預設（section 或鍵缺席、預設 profile）是 Asia/Taipei：廷豐的切日、Retry-After 與訊息逐字不變。
+- 預設（section 或鍵缺席、預設 profile）是 Asia/Taipei：切日、Retry-After 與訊息與框架化之前逐字相同。
 - 非 +8、有日光節約的時區（America/New_York）下，每日配額、用量、分析、簡報、匯出檔名的日界都依它切。
 - 時區在呼叫時取值：同一個行程換 profile（`reset_profile_cache()`）就換時區，沒有 import 期凍結的常數。
 - SQL 的 `AT TIME ZONE` 一律是綁定參數，不內插時區名稱；認不得的名稱在載入 profile 時就拒絕。
