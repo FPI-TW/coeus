@@ -316,6 +316,85 @@ class RerankHeadFirstTests(unittest.TestCase):
         self.assertEqual(build_context(arranged, now=_NOW_DT), build_context(scored, now=_NOW_DT))
 
 
+class RerankHeadRelativeWindowTests(unittest.TestCase):
+    """時間窗也是接納條件：會被時間窗剔除的研報不佔 rerank 名額（與 #412 的過舊軟截斷同理）。"""
+
+    @staticmethod
+    def _scored():
+        # 只有一篇夠新又相關 → 過舊軟截斷不啟動；舊研報只會被時間窗剔除
+        return [
+            (2, 0.99, _dated("o1", "old", "2025-03-01")),
+            (2, 0.97, _dated("n1", "new", "2026-07-01")),
+        ]
+
+    def test_head_skips_reports_the_window_would_drop(self):
+        import app.services.retrieval_pipeline as rp
+
+        arranged, head_n = rp.rerank_head_first(
+            self._scored(), top_m=16, max_passages=4, now=_NOW_DT, relative_window_days=365,
+        )
+        self.assertEqual(head_n, 1)
+        self.assertEqual([r.chunk_id for (_t, _f, r) in arranged], ["n1", "o1"])
+
+    def test_window_off_keeps_the_old_report_in_the_head(self):
+        import app.services.retrieval_pipeline as rp
+
+        scored = self._scored()
+        arranged, head_n = rp.rerank_head_first(
+            scored, top_m=16, max_passages=4, now=_NOW_DT, relative_window_days=0,
+        )
+        self.assertIs(arranged, scored)
+        self.assertEqual(head_n, 2)
+
+    def test_head_and_build_context_agree_on_the_window(self):
+        import app.services.retrieval_pipeline as rp
+        from app.services.answer import build_context
+
+        arranged, head_n = rp.rerank_head_first(
+            self._scored(), top_m=16, max_passages=4, now=_NOW_DT, relative_window_days=365,
+        )
+        sources, _ctx = build_context(arranged, now=_NOW_DT, relative_window_days=365)
+        self.assertEqual(
+            [s.report_id for s in sources], [r.report_id for (_t, _f, r) in arranged[:head_n]],
+        )
+
+
+class RetrieveContextWindowWiringTests(unittest.IsolatedAsyncioTestCase):
+    async def test_same_window_reaches_rerank_head_and_build_context(self):
+        import app.services.retrieval_pipeline as rp
+
+        seen = {}
+
+        async def _fake_hybrid(session, q, vec, **kw):
+            return _stale_mix()
+
+        def _spy_head(scored, **kw):
+            seen["head_kw"] = kw
+            return scored, 0
+
+        def _fake_build(scored, **kw):
+            seen["build_kw"] = kw
+            kw["window_stats"]["relative_window_dropped"] = 3
+            return (["S"], "CTX")
+
+        stats = {}
+        with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
+             mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
+             mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "build_context", _fake_build), \
+             mock.patch.object(rp, "rerank_head_first", _spy_head), \
+             mock.patch.object(rp, "rerank_scored", lambda q, scored, **kw: scored):
+            await rp.retrieve_context(
+                "q", k=15, dense_scan=400, max_reports=15, max_passages=4,
+                max_chars=20000, rerank_top_m=16, now=_NOW_DT, stats=stats,
+                relative_window_days=0,
+            )
+        self.assertEqual(seen["head_kw"]["relative_window_days"], 0)
+        self.assertEqual(seen["build_kw"]["relative_window_days"], 0)
+        self.assertIs(seen["build_kw"]["window_stats"], stats)
+        self.assertEqual(stats["relative_window_dropped"], 3)
+
+
 class RerankHeadWiringTests(unittest.IsolatedAsyncioTestCase):
     async def _run(self, rerank):
         import app.services.retrieval_pipeline as rp
