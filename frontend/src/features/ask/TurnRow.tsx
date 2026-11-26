@@ -1,6 +1,8 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
+import { AnimatePresence, useReducedMotion } from 'motion/react'
 import type { AnswerView, Turn } from '../../lib/askReducer'
 import { AssistantMessage } from './AssistantMessage'
+import { ThinkingHero } from './ThinkingHero'
 import { UserMessage } from './UserMessage'
 import styles from './TurnRow.module.css'
 import { t } from '@/i18n'
@@ -64,8 +66,17 @@ function retry(item: Turn, isLast: boolean, a: TurnActions) {
  * memo 就能讓已完成的輪次完全不動。
  */
 export const TurnRow = memo(function TurnRow({ turn: item, busy, isLast, actions: a }: Props) {
+  const reduce = useReducedMotion()
+  const thinking = item.phase === 'thinking'
+  // 這次在頁面上思考過的輪（新提問、追問、重新生成）：是最後一輪時至少佔滿可見高度，
+  // 問題停在頂端、下面給大球置中；回答開始後照樣保留，畫面才不會往上跳。
+  // 歷史對話載入時都已完成，不受影響。依前值比對而不是 effect（交接包坑 5）。
+  const [wasLive, setWasLive] = useState(thinking || item.phase === 'streaming')
+  if (!wasLive && thinking) setWasLive(true)
+  const orbLayoutId = reduce ? undefined : `think-orb-${item.id}`
+  const hero = thinking && <ThinkingHero key="hero" turn={item} orbLayoutId={orbLayoutId} />
   return (
-    <section className={styles.turn} aria-label={t('ask.turnRow.conversationTurn')}>
+    <section className={`${styles.turn} ${isLast && wasLive ? styles.fill : ''}`} aria-label={t('ask.turnRow.conversationTurn')}>
       <UserMessage text={item.question} onEdit={q => a.editResubmit(item.id, item.qaId, q)} disabled={busy} />
       <AssistantMessage
         turn={item}
@@ -80,6 +91,7 @@ export const TurnRow = memo(function TurnRow({ turn: item, busy, isLast, actions
           if (isLast) a.stickToBottom()
         }}
         onFollowup={a.submit}
+        orbLayoutId={orbLayoutId}
         disabled={busy}
         onSetVersion={i => {
           // priorVersions「不完整」（而非只有「全空」）就先補載：歷史多版本輪
@@ -94,6 +106,8 @@ export const TurnRow = memo(function TurnRow({ turn: item, busy, isLast, actions
           }
         }}
       />
+      {/* popLayout：退場中的大球抽離版面，回答直接從問題下方長出來，不被它往下推。 */}
+      {reduce ? hero : <AnimatePresence mode="popLayout">{hero}</AnimatePresence>}
     </section>
   )
 })

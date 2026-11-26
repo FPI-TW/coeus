@@ -95,6 +95,18 @@ export default function AskPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctrl.conversationId])
 
+  // 對話流的可見高度寫成 --ask-flow-h：最後一輪靠它撐滿畫面，讓思考中的大球置中（TurnRow 的 .fill）。
+  // 要在下面的貼底捲動之前量好，送出後一捲到底，問題就停在頂端。
+  useLayoutEffect(() => {
+    const el = flowRef.current
+    if (!el) return
+    const measure = () => el.style.setProperty('--ask-flow-h', `${el.clientHeight}px`)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   // 貼底捲動：在最新位置時，內容每長一次就跟到底；使用者往上捲之後就不再拉他回去。
   useLayoutEffect(() => {
     const el = flowRef.current

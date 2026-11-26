@@ -348,7 +348,7 @@ class ConftestModelGuardTests(unittest.TestCase):
     """
 
     def test_runtime_values(self):
-        for key in lm.TASK_ENV.values():
+        for key in (*lm.TASK_ENV.values(), *lm.TASK_REASONING_ENV.values()):
             self.assertEqual(os.environ.get(key), "", key)
         self.assertEqual(os.environ.get("LLM_PROVIDER"), "openai")
         self.assertEqual(os.environ.get("LLM_ENV_FILE"), "/nonexistent/report-mark-llm")
@@ -382,7 +382,7 @@ class ConftestModelGuardTests(unittest.TestCase):
                 if body_assigns_environ:
                     loop_keys |= {e.value for e in node.iter.elts if isinstance(e, ast.Constant)}
         self.assertLessEqual({"LLM_PROVIDER", "LLM_ENV_FILE", "LLM_DEFAULT_MODEL"}, assigned)
-        self.assertEqual(loop_keys, set(lm.TASK_ENV.values()))
+        self.assertEqual(loop_keys, set(lm.TASK_ENV.values()) | set(lm.TASK_REASONING_ENV.values()))
 
 
 if __name__ == "__main__":

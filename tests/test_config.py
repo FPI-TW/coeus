@@ -30,12 +30,21 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.ask_min_reports, 3)
         self.assertEqual(s.ask_stale_age_days, 180)
         self.assertEqual(s.ask_max_stale_reports, 4)
+        self.assertEqual(s.ask_relative_window_days, 365)
         self.assertFalse(s.ask_enable_web)  # PR-M：網搜沒有後端，預設關
         # intent
         self.assertEqual(s.ask_intent_model, "gpt-6-luna")
         self.assertEqual(s.ask_intent_timeout, 20.0)
         self.assertEqual(s.ask_condense_model, "gpt-6-luna")
         self.assertEqual(s.ask_condense_timeout, 20.0)
+
+    def test_relative_window_days_parsing(self):
+        """ASK_RELATIVE_WINDOW_DAYS：0＝停用照收；負值、非整數、空值退回預設 365（_int_at_least）。"""
+        from app import config
+
+        for raw, expected in (("0", 0), ("30", 30), (" 400 ", 400), ("-1", 365), ("1.5", 365), ("abc", 365), ("", 365)):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"ASK_RELATIVE_WINDOW_DAYS": raw}):
+                self.assertEqual(config._load().ask_relative_window_days, expected)
 
     def test_ask_web_defaults_m11(self):
         """總閘預設關（網搜沒有後端，開著只會讓時效題婉拒、

@@ -29,6 +29,8 @@ LLM 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0640 r
     退回預設就變成照常計費。
   - 有不在模型白名單的名稱（含舊模型名、打錯字）：沒有其他 backend，這些名稱在 `run_claude` 也會整批 rc=2，
     這裡在取鎖前先擋。
+  - 本段任務的推理旋鈕（`llm_models.TASK_REASONING_ENV`，例如 `SUMMARY_REASONING`）拼錯：`run_claude` 也會整批
+    rc=2，這裡先擋（`llm_models.reasoning_problems`；只看傳進來的任務，模型名清單形式的評測入口不檢查）。
   - 有白名單模型卻沒有金鑰；依原因提示（環境裡已有空值→先 unset；PermissionError→以
     kashionz 執行；檔案不存在→依範例檔檔頭安裝；檔裡沒填→sudoedit）。訊息帶出是哪個旋鈕
     （或 `LLM_PROVIDER` 的預設、`--model`）解析出來的。批次（`run_claude`、`generate_brief`）與
@@ -343,6 +345,9 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
             "沒有其他 backend；"
             f"來源：{'、'.join(sorted({_model_source(t, m) for t, m in pairs if not is_http_model(m)}))}）"
         )
+    reasoning = llm_models.reasoning_problems(t for t, _ in pairs if t)
+    if reasoning:
+        _fail(f"推理強度設定有誤：{'；'.join(reasoning)}。檢查 shell、unit 的 Environment= 與 {path}")
     _warn_if_not_deploy_root()
     if not names:
         return

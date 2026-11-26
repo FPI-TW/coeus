@@ -26,8 +26,9 @@ from fake_accounts import FakeAccounts
 from app.services import accounts, totp
 
 
-def _name(prefix: str) -> str:
-    return f"{prefix}_{uuid.uuid4().hex[:10]}"
+def _name(prefix: str, domain: str = "example.com") -> str:
+    """本機建帳的帳號必須是 Email，所以隨機名稱一律帶網域。"""
+    return f"{prefix}_{uuid.uuid4().hex[:10]}@{domain}"
 
 
 PW = "first-password-1"
@@ -59,7 +60,8 @@ async def scenario_duplicate_username_case_insensitive(api) -> None:
 
 async def scenario_invalid_input(api) -> None:
     for bad in (("a", PW, "user"), (_name("ok"), "short", "user"), (_name("ok"), PW, "root"),
-                ("has space", PW, "user")):
+                ("has space", PW, "user"), ("plain_name", PW, "user"), ("x@example", PW, "user"),
+                (_name("ok"), "letters-only", "user"), (_name("ok"), "1234567890", "user")):
         try:
             await api.create_user(*bad, actor_id=None)
         except accounts.InvalidInputError:
@@ -717,8 +719,8 @@ async def scenario_audit_prefix_filter(api) -> None:
     admin = await api.create_user(_name("Adm"), PW, "admin", actor_id=None)
     target = await api.create_user(_name("Tgt"), PW, "user", actor_id=admin.id)
     await api.update_user(target.id, enabled=False, actor_id=admin.id)
-    await api.record_ops_action(actor_id=admin.id, action="restart", service=_name("svc"), environment="test",
-                                result="queued")
+    await api.record_ops_action(actor_id=admin.id, action="restart", service=f"svc_{uuid.uuid4().hex[:10]}",
+                                environment="test", result="queued")
     await api.record_export(actor_id=admin.id, kind="users", filters={}, row_count=0, truncated=False)
 
     def mine(entries):
@@ -889,7 +891,7 @@ def _issuer() -> str:
 
 
 async def scenario_sso_jit_creates_plain_user(api) -> None:
-    iss, sub, name = _issuer(), uuid.uuid4().hex, _name("jit") + "@corp.example"
+    iss, sub, name = _issuer(), uuid.uuid4().hex, _name("jit", "corp.example")
     first = await api.sso_login(iss, sub, name)
     assert first.reason == "ok" and first.created and not first.linked, first
     assert first.user.role == "user" and first.user.scopes == frozenset() and first.user.auth_method == "sso"
@@ -906,6 +908,10 @@ async def scenario_sso_jit_creates_plain_user(api) -> None:
     assert (await api.authenticate(name, accounts.SSO_PASSWORD_HASH)).reason == "bad_password"
     other = await api.sso_login(_issuer(), sub, _name("other"))  # 同一個 subject、不同 issuer 是另一個人
     assert other.created and other.user.id != first.user.id
+    # 本機建帳要 Email，但 IdP 給的名稱不一定是：JIT 建帳沿用較寬的名稱規則。
+    plain = f"plain_{uuid.uuid4().hex[:10]}"
+    jit_plain = await api.sso_login(_issuer(), uuid.uuid4().hex, plain)
+    assert jit_plain.reason == "ok" and jit_plain.created and jit_plain.user.username == plain, jit_plain
 
 
 async def scenario_sso_disabled_and_admin_rights(api) -> None:
@@ -924,7 +930,7 @@ async def scenario_sso_disabled_and_admin_rights(api) -> None:
 
 
 async def scenario_sso_username_conflict_and_link(api) -> None:
-    local = await api.create_user(_name("Local") + "@corp.example", PW, "user", actor_id=None)
+    local = await api.create_user(_name("Local", "corp.example"), PW, "user", actor_id=None)
     iss, sub = _issuer(), uuid.uuid4().hex
     with _oidc(link_by_username=False):
         res = await api.sso_login(iss, sub, local.username.upper())

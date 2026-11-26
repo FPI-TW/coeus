@@ -2834,7 +2834,7 @@ const messages = {
   'admin.users.createUserDialog.username': '帳號',
   'admin.users.createUserDialog.initialPassword': '初始密碼',
   'admin.users.createUserDialog.role': '角色',
-  'admin.users.createUserDialog.usernamesAre264Characters': '帳號 2–64 個字元（文字、數字與 . _ @ -），不分大小寫；密碼至少 {MIN_PASSWORD} 個字元。 請把初始密碼以安全的管道交給對方。',
+  'admin.users.createUserDialog.usernameIsEmail': '帳號為 Email 格式，不分大小寫；密碼至少 {MIN_PASSWORD} 個字元，需同時包含英文字母與數字，可含特殊符號。 請把初始密碼以安全的管道交給對方。',
 
   // features/admin/users/PrivilegesDialog.tsx
   'admin.users.privilegesDialog.adjustPermissionsFor': '調整「{username}」的權限',
@@ -2889,8 +2889,9 @@ const messages = {
   'admin.users.userText.viewQAContentQa': '查看問答內容（qa_content.read）',
   'admin.users.userText.runOperationsActionsOpsOperate': '執行維運操作（ops.operate）',
   'admin.users.userText.manageApiClientsApiClients': '管理 API 用戶端（api_clients.manage）',
-  'admin.users.userText.usernamesMustBe264': '帳號需為 2–64 個字元，只能包含文字、數字與 . _ @ -',
+  'admin.users.userText.usernameMustBeEmail': '帳號需為 Email 格式，例如 name@example.com',
   'admin.users.userText.passwordsMustBeAtLeast': '密碼至少 {MIN_PASSWORD} 個字元',
+  'admin.users.userText.passwordNeedsLetterAndDigit': '密碼需同時包含英文字母與數字',
   'admin.users.userText.disable': '停用「{username}」？',
   'admin.users.userText.takesEffectImmediatelyEveryDevice': '停用後立即生效：該帳號所有裝置會在下一個動作時被登出，也無法再登入。可以隨時重新啟用（需重新登入）。',
   'admin.users.userText.disable2': '停用',

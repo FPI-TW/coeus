@@ -34,7 +34,8 @@ def _fixture():
 
 class BuildContextGoldenTests(unittest.TestCase):
     def test_golden_output_unchanged(self):
-        sources, context = build_context(_fixture(), now=_NOW)
+        # 時間窗關掉：這份 golden 釘的是其餘選篇政策（預設 365 天會剔掉 rC，見 RelativeWindowTests）
+        sources, context = build_context(_fixture(), now=_NOW, relative_window_days=0)
         got = ([asdict(s) for s in sources], context)
         # 執行者 Step 2：把實際 got 貼成 EXPECTED 後改為 assertEqual(got, EXPECTED)
         self.assertEqual(got, EXPECTED)
@@ -475,3 +476,136 @@ class SelectionOrderTests(unittest.TestCase):
 
         scored = [_fresh(f"r{i}", 2, 0.9 - i / 100) for i in range(5)]
         self.assertEqual(len(selection_order(scored, max_reports=3, now=_NOW)), 3)
+
+
+# ---------------------------------------------------------------------------
+# 相對時間窗（ASK_RELATIVE_WINDOW_DAYS）：以通過相關度閘、日期最新的候選為基準，
+# 早於「基準日 − N 天」的研報整批剔除；最新那份一定留著，沒有日期的不受影響。
+
+
+def _dated(rid, tier, fused, rdate):
+    return (tier, fused, _row_src(f"c-{rid}", rid, rdate=rdate, content=f"{rid} 段"))
+
+
+def _ids(sel):
+    return [s.report_id for s in sel]
+
+
+class RelativeWindowTests(unittest.TestCase):
+    def test_drops_reports_older_than_newest_relevant_minus_n(self):
+        scored = [
+            _dated("old", 2, 0.99, "2025-06-30"),   # 基準 2026-07-01 − 365 天 = 2025-07-01 之前
+            _dated("edge", 2, 0.98, "2025-07-01"),  # 恰在邊界上：保留
+            _dated("new", 2, 0.90, "2026-07-01"),
+        ]
+        stats = {}
+        got = _ids(_select(scored, relative_window_days=365, window_stats=stats))
+        self.assertNotIn("old", got)
+        self.assertEqual(set(got), {"edge", "new"})
+        self.assertEqual(stats, {"relative_window_dropped": 1})
+
+    def test_zero_disables_and_matches_the_previous_policy(self):
+        scored = [_dated("old", 2, 0.99, "2024-01-01"), _dated("new", 2, 0.90, "2026-07-01")]
+        stats = {}
+        self.assertEqual(
+            _select(scored, relative_window_days=0, window_stats=stats), _select(scored),
+        )
+        self.assertIn("old", _ids(_select(scored)))
+        self.assertEqual(stats, {"relative_window_dropped": 0})
+
+    def test_window_is_relative_to_the_newest_relevant_report_not_today(self):
+        """標的最近一份研報在一年多前：時間窗跟著往回移，不會把脈絡清空。"""
+        scored = [
+            _dated("latest", 2, 0.90, "2025-03-01"),  # 距 _NOW 已 494 天
+            _dated("prior", 2, 0.95, "2024-06-01"),   # 距基準 273 天：保留
+            _dated("ancient", 2, 0.99, "2023-12-01"),  # 距基準 456 天：剔除
+        ]
+        got = _ids(_select(scored, relative_window_days=365))
+        self.assertEqual(set(got), {"latest", "prior"})
+
+    def test_baseline_ignores_reports_that_fail_the_relevance_gate(self):
+        """今天一篇不相干的早報（tier 0、低於 floor）不能把基準拉到今天。"""
+        scored = [
+            _dated("noise", 0, 0.30, "2026-07-07"),
+            _dated("latest", 2, 0.90, "2025-06-01"),
+            _dated("prior", 0, 0.80, "2024-09-01"),  # tier 0 但 gate ≥ floor：算相關
+        ]
+        got = _ids(_select(scored, relative_window_days=365))
+        self.assertIn("latest", got)
+        self.assertIn("prior", got)
+
+    def test_newest_relevant_report_always_survives(self):
+        """基準那份即使排在最後、自己是唯一一篇也一定留著。"""
+        scored = [_dated(f"old{i}", 2, 0.99 - i / 100, "2024-01-01") for i in range(5)]
+        scored.append(_dated("newest", 2, 0.30, "2026-07-01"))
+        stats = {}
+        got = _ids(_select(scored, relative_window_days=30, window_stats=stats))
+        self.assertEqual(got, ["newest"])
+        self.assertEqual(stats["relative_window_dropped"], 5)
+
+    def test_window_wins_over_min_reports(self):
+        """保底篇數補不回被時間窗剔除的研報：只剩基準那份就只給一份。"""
+        scored = [
+            _dated("old1", 2, 0.99, "2024-01-01"),
+            _dated("old2", 2, 0.98, "2024-02-01"),
+            _dated("newest", 2, 0.90, "2026-07-01"),
+        ]
+        got = _ids(_select(scored, relative_window_days=365, min_reports=3))
+        self.assertEqual(got, ["newest"])
+        # 對照：沒有時間窗時保底與其他規則會把舊研報放進來
+        self.assertEqual(len(_select(scored, min_reports=3)), 3)
+
+    def test_undated_reports_are_not_affected(self):
+        scored = [
+            (2, 0.99, _row_src("c-nodate", "nodate", rdate=None, content="無日期段")),
+            _dated("old", 2, 0.98, "2024-01-01"),
+            _dated("newest", 2, 0.90, "2026-07-01"),
+        ]
+        stats = {}
+        got = _ids(_select(scored, relative_window_days=365, window_stats=stats))
+        self.assertEqual(set(got), {"nodate", "newest"})
+        self.assertEqual(stats["relative_window_dropped"], 1)
+
+    def test_no_relevant_dated_candidate_means_no_window(self):
+        scored = [
+            (2, 0.99, _row_src("c-nodate", "nodate", rdate=None, content="無日期段")),
+            _dated("noise_new", 0, 0.30, "2026-07-07"),
+            _dated("noise_old", 0, 0.30, "2023-01-01"),
+        ]
+        stats = {}
+        got = _ids(_select(scored, relative_window_days=30, min_reports=3, window_stats=stats))
+        self.assertEqual(set(got), {"nodate", "noise_new", "noise_old"})  # 保底放行
+        self.assertEqual(stats["relative_window_dropped"], 0)
+
+    def test_window_applies_to_the_mmr_branch_too(self):
+        scored = [_dated("old", 2, 0.99, "2024-01-01"), _dated("new", 2, 0.90, "2026-07-01")]
+        emb = {"c-old": [1.0, 0.0], "c-new": [0.0, 1.0]}
+        got = _ids(_select(scored, relative_window_days=365, mmr_lambda=0.7, chunk_embeddings=emb))
+        self.assertEqual(got, ["new"])
+
+    def test_build_context_defaults_to_the_module_knob(self):
+        from unittest import mock
+
+        import app.services.answer as ans
+
+        scored = [_dated("old", 2, 0.99, "2024-01-01"), _dated("new", 2, 0.90, "2026-07-01")]
+        with mock.patch.object(ans, "ASK_RELATIVE_WINDOW_DAYS", 365):
+            sources, _ctx = build_context(scored, now=_NOW)
+            self.assertEqual([s.report_id for s in sources], ["new"])
+            stats = {}
+            sources, _ctx = build_context(scored, now=_NOW, relative_window_days=0, window_stats=stats)
+            self.assertEqual({s.report_id for s in sources}, {"old", "new"})
+            self.assertEqual(stats, {"relative_window_dropped": 0})
+        with mock.patch.object(ans, "ASK_RELATIVE_WINDOW_DAYS", 0):
+            sources, _ctx = build_context(scored, now=_NOW)
+            self.assertEqual({s.report_id for s in sources}, {"old", "new"})
+
+    def test_selection_order_applies_the_same_window(self):
+        """rerank 候選問的是同一份政策：時間窗剔除的研報不在接納名單裡。"""
+        from app.services.answer import selection_order
+
+        scored = [_dated("old", 2, 0.99, "2024-01-01"), _dated("new", 2, 0.90, "2026-07-01")]
+        self.assertEqual(selection_order(scored, max_reports=15, now=_NOW, relative_window_days=365), ["new"])
+        self.assertEqual(
+            set(selection_order(scored, max_reports=15, now=_NOW, relative_window_days=0)), {"old", "new"},
+        )

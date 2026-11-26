@@ -2837,7 +2837,7 @@ const messages: Messages<typeof zh> = {
   'admin.users.createUserDialog.username': 'Username',
   'admin.users.createUserDialog.initialPassword': 'Initial password',
   'admin.users.createUserDialog.role': 'Role',
-  'admin.users.createUserDialog.usernamesAre264Characters': 'Usernames are 2–64 characters (letters, digits and . _ @ -), case-insensitive; passwords are at least {MIN_PASSWORD} characters. Hand over the initial password through a secure channel.',
+  'admin.users.createUserDialog.usernameIsEmail': 'Usernames are email addresses, case-insensitive; passwords are at least {MIN_PASSWORD} characters and must include both letters and digits (symbols allowed). Hand over the initial password through a secure channel.',
 
   // features/admin/users/PrivilegesDialog.tsx
   'admin.users.privilegesDialog.adjustPermissionsFor': 'Adjust permissions for “{username}”',
@@ -2892,8 +2892,9 @@ const messages: Messages<typeof zh> = {
   'admin.users.userText.viewQAContentQa': 'View Q&A content (qa_content.read)',
   'admin.users.userText.runOperationsActionsOpsOperate': 'Run operations actions (ops.operate)',
   'admin.users.userText.manageApiClientsApiClients': 'Manage API clients (api_clients.manage)',
-  'admin.users.userText.usernamesMustBe264': 'Usernames must be 2–64 characters and contain only letters, digits and . _ @ -',
+  'admin.users.userText.usernameMustBeEmail': 'Usernames must be an email address, e.g. name@example.com',
   'admin.users.userText.passwordsMustBeAtLeast': 'Passwords must be at least {MIN_PASSWORD} characters',
+  'admin.users.userText.passwordNeedsLetterAndDigit': 'Passwords must include both letters and digits',
   'admin.users.userText.disable': 'Disable “{username}”?',
   'admin.users.userText.takesEffectImmediatelyEveryDevice': 'Takes effect immediately: every device of the account is signed out on its next action and can\'t sign in again. It can be re-enabled at any time (requires signing in again).',
   'admin.users.userText.disable2': 'Disable',

@@ -91,7 +91,7 @@ async def _rerank_stage(
     return reranked, applied
 
 
-def rerank_head_first(scored, *, top_m, max_passages, now=None):
+def rerank_head_first(scored, *, top_m, max_passages, now=None, relative_window_days=None):
     """把「選篇政策會接納的研報」的 chunk 排到最前面，回 (scored, head 筆數)；head＝其中融合序前 top_m 個。
 
     rerank 只重排前 top_m 個 chunk（問答 16）。舊做法直接取融合序的前 top_m 個，2026-11-10 在固定
@@ -101,7 +101,8 @@ def rerank_head_first(scored, *, top_m, max_passages, now=None):
     是 2024–2025 年，入選 15 篇只有 1 篇被重排。
 
     接納與否直接問選篇政策（`answer.selection_order`，篇數與字數不設限：只要知道哪些研報不會被
-    過舊軟截斷、相關度下限或過舊配額永久剔除），不另寫一份判準。重排配對數不變（延遲不變）；
+    相對時間窗、過舊軟截斷、相關度下限或過舊配額永久剔除），不另寫一份判準。relative_window_days
+    與同一題的 build_context 相同（None＝ASK_RELATIVE_WINDOW_DAYS，歷史題是 0）。重排配對數不變（延遲不變）；
     其餘 chunk 相對序不變，報告內段落順序與代表 chunk 也不變，所以不帶 rerank_scores 時
     build_context 的結果與原 scored 逐字相同。
 
@@ -111,6 +112,7 @@ def rerank_head_first(scored, *, top_m, max_passages, now=None):
     try:
         admitted = set(selection_order(
             scored, max_reports=len(scored), max_passages=max_passages, max_chars=sys.maxsize, now=now,
+            relative_window_days=relative_window_days,
         ))
         head_idx = [
             i for i, (_t, _f, row) in enumerate(scored)
@@ -154,6 +156,7 @@ async def retrieve_context(
     rerank_top_m: int = 0,
     rerank_timeout: float | None = None,
     stats: dict | None = None,
+    relative_window_days: int | None = None,
 ) -> tuple[list[Source], str]:
     """回 (sources, context)。timer 給定時記 embed/retrieve/rerank 各段耗時。
     rerank_top_m>0 時在檢索後、選篇前插入 cross-encoder 重排（fail-open），並把
@@ -167,7 +170,11 @@ async def retrieve_context(
     lex_truncated）與兩路的分段耗時（dense_ms／lex_ms，毫秒；字面路未執行時
     lex_ms 為 0），另記 rerank_queue_ms、rerank_compute_ms、rerank_applied、
     rerank_timed_out。compute 包含 asyncio.to_thread 排程等待；逾時後背景工作仍
-    可能補寫 compute。由呼叫端決定要不要記錄——本函式不 log，避免資訊重複。"""
+    可能補寫 compute。由呼叫端決定要不要記錄——本函式不 log，避免資訊重複。
+    stats 也收選篇的 relative_window_dropped（相對時間窗剔除篇數）。
+
+    relative_window_days：選篇的相對時間窗，rerank head 與 build_context 用同一個值；
+    None＝ASK_RELATIVE_WINDOW_DAYS，歷史題由呼叫端傳 0。"""
     filters = filters or {}
     qvec = await asyncio.to_thread(embed_query_cached, question)
     if timer is not None:
@@ -197,6 +204,7 @@ async def retrieve_context(
         # head 只從選篇會接納的研報取（見 rerank_head_first）；gate 快照在挪動前取，內容相同。
         scored, head_n = rerank_head_first(
             scored, top_m=rerank_top_m, max_passages=max_passages, now=now,
+            relative_window_days=relative_window_days,
         )
         scored, applied = await _rerank_stage(
             question, scored, top_m=head_n, timeout=timeout, timer=timer, stats=stats,
@@ -220,4 +228,6 @@ async def retrieve_context(
         now=now,
         gate_scores=gate_scores,
         rerank_scores=rerank_scores,
+        relative_window_days=relative_window_days,
+        window_stats=stats,
     )
