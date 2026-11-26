@@ -98,6 +98,9 @@ background_enabled = false
 [locale]
 # 介面與問答回答的語系（介面字串在 frontend/src/i18n/）：使用者沒選過語言時用 default，available 是可選的語系。
 # 預設中文＝改動前的行為；使用者在「設定 → 偏好 → 語言」或登入頁切換，偏好存在瀏覽器（tf.locale／tf_locale）。
+# timezone 是業務時區（IANA）：每日配額與 API 額度的「一天」、用量與分析的切日、簡報的鐘點、匯出檔名的日期都以它為準。
+# 不寫也是 Asia/Taipei（介面與錯誤訊息的地名預設「台北」／Taipei）；這裡明寫，表示這是廷豐的設定、不是碰巧的預設。
+timezone = "Asia/Taipei"
 default = "zh-Hant"
 available = ["zh-Hant", "en"]
 

@@ -50,6 +50,14 @@
 `LOCALES` 的子集）。section 缺席時兩種都開、預設 `zh-Hant`。`[institution]` 的 `*_en` 是英文介面用的名稱，沒給就沿用
 原名（`Institution.localized`）；字串本身在 `frontend/src/i18n/`，profile 不覆寫介面文字。
 
+`[locale].timezone` 是機構的**業務時區**（IANA 名稱，例如 `Asia/Hong_Kong`；缺席＝`Asia/Taipei`）：每日配額與 API
+額度的「一天」、用量與分析的切日、DB 快照的每日彙總、簡報的鐘點、匯出檔名的日期都以它為準（讀取一律經
+`app/services/business_time.py`，在呼叫時取值，不在 import 期定成常數）。載入時以 `zoneinfo` 驗證，認不得的名稱拒絕
+啟動；SQL 端以綁定參數 `:tz` 傳它（`AT TIME ZONE :tz`），不內插進字串。`timezone_label`／`timezone_label_en` 是介面與
+錯誤訊息裡的地名（「{label}時間」、"{label} time"）：`Asia/Taipei` 預設「台北」／`Taipei`，其他時區預設是時區名稱本身，
+英文沒給就沿用中文的。時區與地名經 `/api/branding` 交給前端（日期格式化與「今天」的判斷）。容器的 `TZ`（cron 的解讀
+時區）與它的關係見 `deploy/container/entrypoint.py` 的 `resolve_tz`。
+
 ## 文件類型
 
 `[doc_types]` 宣告文件類型（`research_report.doc_type`）與每種類型啟用的功能（`DOC_FEATURES`，框架固定的詞彙）。
@@ -96,6 +104,7 @@ from functools import cached_property
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.services.tagging import (
     CODE_FORMAT_KINDS,
@@ -195,10 +204,17 @@ class Security:
 LOCALES: tuple[str, ...] = ("zh-Hant", "en")
 
 
+DEFAULT_TIMEZONE = "Asia/Taipei"
+_DEFAULT_TIMEZONE_LABELS = ("台北", "Taipei")
+
+
 @dataclass(frozen=True)
 class Locale:
     default: str = "zh-Hant"  # 使用者沒選過語言時的介面與回答語言
     available: tuple[str, ...] = LOCALES  # 使用者可選的語系（順序＝選單順序）；只有一個時不顯示切換
+    timezone: str = DEFAULT_TIMEZONE  # 業務時區（IANA）：每日配額、切日、簡報鐘點的基準
+    timezone_label: str = _DEFAULT_TIMEZONE_LABELS[0]  # 中文介面與錯誤訊息的地名（「台北時間」的「台北」）
+    timezone_label_en: str = _DEFAULT_TIMEZONE_LABELS[1]  # 英文介面的地名（"Taipei time"）
 
 
 # 文件類型可啟用的功能（框架固定的詞彙；`app/services/doc_types.py` 的 docstring 寫每一項管到哪些查詢）。
@@ -280,7 +296,7 @@ class Backfill:
 
     recent_months: int = 12  # 第二層的窗期（以 report_date 判斷，含邊界當天）
     background_enabled: bool = False  # 第三層背景補齊（scheduler 的 backfill-tiers 工作）；預設關
-    daily_token_limit: int = 2_000_000  # 背景補齊每個台北日的 token 上限（輸入＋輸出）
+    daily_token_limit: int = 2_000_000  # 背景補齊每個業務日（[locale].timezone 的日曆日）的 token 上限（輸入＋輸出）
     max_reports_per_round: int = 100  # 背景補齊每輪最多處理幾份研報
 
 
@@ -724,9 +740,27 @@ def _parse_backfill(table: dict, ctx: _Ctx) -> Backfill:
     )
 
 
+# IANA 名稱的形狀（`Area/Location`，最多三段）；另外擋掉 zoneinfo 目錄裡不是時區的檔名。形狀先擋，才交給 zoneinfo
+# 找檔。名稱會經綁定參數進 SQL 的 AT TIME ZONE（PostgreSQL 用同一套 IANA 名稱）。
+_TIMEZONE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+){0,2}")
+_NOT_TIMEZONES = frozenset({"localtime", "posixrules", "factory"})
+
+
+def _parse_timezone(table: Mapping[str, Any], ctx: _Ctx) -> str:
+    name = ctx.string(table, "timezone", default=DEFAULT_TIMEZONE, max_len=64)
+    hint = "必須是 IANA 時區名稱（例如 Asia/Taipei、Asia/Hong_Kong、Europe/London）"
+    if not _TIMEZONE_NAME.fullmatch(name) or name.lower() in _NOT_TIMEZONES:
+        raise ctx.error("timezone", f"{hint}：{name!r}")
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        raise ctx.error("timezone", f"{hint}，找不到 {name!r}") from None
+    return name
+
+
 @_section("locale")
 def _parse_locale(table: dict, ctx: _Ctx) -> Locale:
-    ctx.reject_unknown(table, {"default", "available"})
+    ctx.reject_unknown(table, {"default", "available", "timezone", "timezone_label", "timezone_label_en"})
     available = ctx.string_list(table, "available")
     if available is None:
         available = list(LOCALES)
@@ -742,7 +776,13 @@ def _parse_locale(table: dict, ctx: _Ctx) -> Locale:
     default = ctx.string(table, "default", default=available[0], max_len=10)
     if default not in available:
         raise ctx.error("default", f"預設語系 {default!r} 不在 available 裡（{'、'.join(available)}）")
-    return Locale(default=default, available=tuple(available))
+    timezone = _parse_timezone(table, ctx)
+    labels = _DEFAULT_TIMEZONE_LABELS if timezone == DEFAULT_TIMEZONE else (timezone, timezone)
+    label = ctx.string(table, "timezone_label", default=labels[0], max_len=40)
+    label_en = ctx.string(table, "timezone_label_en",
+                          default=label if "timezone_label" in table else labels[1], max_len=40)
+    return Locale(default=default, available=tuple(available), timezone=timezone, timezone_label=label,
+                  timezone_label_en=label_en)
 
 
 @_section("instruments")

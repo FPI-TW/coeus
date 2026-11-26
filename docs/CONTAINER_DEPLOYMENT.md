@@ -127,7 +127,7 @@ docker compose up -d
 
 ## systemd timer 對照表
 
-`deploy/systemd/` 的每一支 timer 都有歸屬（`deploy/container/scheduler.py`，`tests/test_container_deploy.py` 對帳這張表、也逐支比對排程時間與 timer 的 OnCalendar）。框架排程在容器的 `TZ`（預設 Asia/Taipei）下解讀；預設關的工作以 `SCHEDULER_ENABLE` 開啟，預設開的以 `SCHEDULER_DISABLE` 關掉（逗號分隔的工作名，打錯名字 scheduler 拒絕啟動）。
+`deploy/systemd/` 的每一支 timer 都有歸屬（`deploy/container/scheduler.py`，`tests/test_container_deploy.py` 對帳這張表、也逐支比對排程時間與 timer 的 OnCalendar）。框架排程在容器的 `TZ` 下解讀，排程時間是 profile 業務時區（`[locale].timezone`）的鐘點：`TZ` 沒設（compose 的預設）時 entrypoint 以 profile 的時區補上，設了而與它不同時 scheduler 拒絕啟動、其他角色只警告（`deploy/container/entrypoint.py` 的 `resolve_tz`）。日界一律由程式依 profile 決定，與 `TZ` 無關；postgres 容器讀不到 profile，`TZ` 沒設時是 UTC（只影響 DB 端的 `current_date` 與日誌）。預設關的工作以 `SCHEDULER_ENABLE` 開啟，預設開的以 `SCHEDULER_DISABLE` 關掉（逗號分隔的工作名，打錯名字 scheduler 拒絕啟動）。
 
 | Timer | 歸屬 | 容器裡 |
 |---|---|---|
@@ -171,7 +171,7 @@ docker compose up -d
 | 工作 | 排程 | 說明 |
 |---|---|---|
 | `connectors` | `*/15 * * * *` | 預設開。`scripts/connector_sync.py`：profile `[connectors].enabled` 的連接器到了輪詢時間（各自的 `poll_minutes`，預設 180 分鐘）才跑一輪「落地新檔 → 入庫 → 摘要／標題／摘錄（`--hashes-file`）→ 訊號（`--limit`）→ 簡報 → 標題積壓（`--limit`）」，步驟與參數同 sync 鏈第 4 段起，差異只有分層回填（摘要、標題、摘錄只收本輪第二層的新研報，訊號與標題積壓帶 `--min-report-date`，見 `docs/WORKFLOW.md`「首次導入」）；沒有啟用的連接器、或都沒到期就是 no-op。設定、側檔格式與落地資料夾見 `docs/WORKFLOW.md`「資料來源連接器」 |
-| `backfill-tiers` | `50 * * * *` | 預設開，但 profile 的 `[backfill].background_enabled` 預設 `false`＝no-op（開關在 profile，不在 `SCHEDULER_ENABLE`）。`scripts/backfill_tiers.py --tier 3 --scheduled`：首次導入的第三層背景補齊（`report_date` 早於 `[backfill].recent_months` 個月、或為 NULL 的研報，補摘要、標題、摘錄、訊號），每輪最多 `max_reports_per_round` 份、每個台北日最多 `daily_token_limit` token，到上限就停、下一輪再續；以 `nice` 降低優先權，各批次照舊取 LLM 批次鎖（撞鎖就停）。帳在 `data/backfill/state.json`。步驟見 `docs/WORKFLOW.md`「首次導入」 |
+| `backfill-tiers` | `50 * * * *` | 預設開，但 profile 的 `[backfill].background_enabled` 預設 `false`＝no-op（開關在 profile，不在 `SCHEDULER_ENABLE`）。`scripts/backfill_tiers.py --tier 3 --scheduled`：首次導入的第三層背景補齊（`report_date` 早於 `[backfill].recent_months` 個月、或為 NULL 的研報，補摘要、標題、摘錄、訊號），每輪最多 `max_reports_per_round` 份、每個業務日最多 `daily_token_limit` token，到上限就停、下一輪再續；以 `nice` 降低優先權，各批次照舊取 LLM 批次鎖（撞鎖就停）。帳在 `data/backfill/state.json`。步驟見 `docs/WORKFLOW.md`「首次導入」 |
 
 連接器的資料夾要讓 web 與 scheduler 在**同一個路徑**看得到：入庫後 `research_report.file_path` 指向落地的檔案，`OBJECT_STORAGE_MODE=local` 時 web 從那裡交原檔。`s3`／`plugin` 的預設落地資料夾在 `data/connectors/<名稱>/`（`data` volume，已共用）；`folder` 監看的是部署方自己掛上的目錄（SMB／NFS 由主機掛載，框架不做 mount），以 compose 的 override 檔（與 docker-compose.yml 同目錄的 docker-compose.override.yml）把它以唯讀 bind 掛進 web 與 scheduler，`profile.toml` 的 `path` 寫容器裡的路徑：
 
