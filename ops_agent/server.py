@@ -316,7 +316,7 @@ async def serve(agent: Agent, socket_path: str, stop: asyncio.Event) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="ops_agent",
-                                 description="report-mark 維運代理（status、logs；白名單 restart、run）")
+                                 description="Coeus 維運代理（status、logs；白名單 restart、run）")
     ap.add_argument("--catalog", required=True, help="Service Catalog（TOML）")
     ap.add_argument("--socket", help="覆寫 socket 路徑（只限 development；production 一律用固定路徑）")
     ap.add_argument("--check", action="store_true", help="只驗證 catalog 與綁定，不啟動")

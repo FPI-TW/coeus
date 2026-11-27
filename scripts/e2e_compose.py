@@ -392,7 +392,7 @@ def run(args) -> int:
     root = Path(args.work_dir) if args.work_dir else None
     if root:
         root.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix="report-mark-e2e-", dir=root))
+    work = Path(tempfile.mkdtemp(prefix="coeus-e2e-", dir=root))
     project = args.project or f"e2e-{secrets.token_hex(3)}"
     checks = Checks()
     web_port, s3_port = free_port(), free_port()

@@ -1,6 +1,6 @@
 # deploy/OWNERSHIP.toml —— deploy/、scripts/、ops_agent/ 每個受版控檔案的歸屬（機器可讀）。
 #
-# 本 repo 是「券商研報平台」框架，廷豐是其中一個 profile（profiles/tingfong/）與一組主機層附加元件。兩類：
+# 本 repo 是 Coeus（券商研報平台）框架，廷豐是其中一個 profile（profiles/tingfong/）與一組主機層附加元件。兩類：
 #
 #   framework      框架本身：任何 profile、任何部署形態（容器、自己的主機）都用得到。框架擁有的檔案不得出現
 #                  「廷豐」／tingfong（tests/test_framework_branding.py 掃描；例外逐條寫在那支測試的白名單）。

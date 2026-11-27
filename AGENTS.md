@@ -1,6 +1,6 @@
 # AGENTS.md
 
-券商研報平台——給券商單租戶、部署在自己環境的研報框架：PDF/docx 抽字 → LLM（`gpt-6-luna`）標註 → BGE-M3 嵌入 pgvector → 語意檢索／RAG 問答／觀點雷達／每日簡報／閱讀頁。機構專屬的設定在 profile（`profiles/<名稱>/`，載入與驗證在 `app/profile.py`），祕密與部署層設定走環境變數；部署形態是容器映像＋docker compose（`docs/CONTAINER_DEPLOYMENT.md`）。<!-- export-omit:begin -->廷豐是第一個 profile（`profiles/tingfong/`，也是預設 profile）與現行的兩台主機部署，規則集中在下面的「廷豐部署」。`deploy/`、`scripts/`、`ops_agent/` 每個檔案屬框架或廷豐主機層，列在 `deploy/OWNERSHIP.toml`。Repo 目錄是 `report-mark`，GitHub 是 `FPI-TW/report-research`。<!-- export-omit:end -->
+Coeus（券商研報平台）——給券商單租戶、部署在自己環境的研報框架：PDF/docx 抽字 → LLM（`gpt-6-luna`）標註 → BGE-M3 嵌入 pgvector → 語意檢索／RAG 問答／觀點雷達／每日簡報／閱讀頁。機構專屬的設定在 profile（`profiles/<名稱>/`，載入與驗證在 `app/profile.py`），祕密與部署層設定走環境變數；部署形態是容器映像＋docker compose（`docs/CONTAINER_DEPLOYMENT.md`）。框架名是 Coeus；改名前的舊名 `report-mark` 刻意留在執行期識別碼（`REPORT_MARK_*` 環境變數、`report_mark_*` 指標、`report-mark-*` 的 unit、容器與路徑、映像與 compose 專案名、`report-mark/feature-flags` 匯出格式、LLM 請求的 User-Agent），已部署的主機與外部監控都認它，不跟著改名。<!-- export-omit:begin -->廷豐是第一個 profile（`profiles/tingfong/`，也是預設 profile）與現行的兩台主機部署，規則集中在下面的「廷豐部署」。`deploy/`、`scripts/`、`ops_agent/` 每個檔案屬框架或廷豐主機層，列在 `deploy/OWNERSHIP.toml`。Repo 目錄是 `report-mark`，GitHub 是 `FPI-TW/coeus`。<!-- export-omit:end -->
 
 本檔是給貢獻者與 AI 代理的**唯一**指引檔（repo 刻意不放 CLAUDE.md，不要新增）。這裡只列鐵律、改動連動與陷阱；模組地圖與「刻意」設計的完整出處在 `docs/ARCHITECTURE.md`，管線與 API 契約在 `docs/WORKFLOW.md`，容器部署在 `docs/CONTAINER_DEPLOYMENT.md`<!-- export-omit:begin -->，廷豐主機的部署與維運程序在 `docs/production_resilience.md`<!-- export-omit:end -->。
 

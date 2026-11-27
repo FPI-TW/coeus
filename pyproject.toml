@@ -1,5 +1,5 @@
 [project]
-name = "report-mark"
+name = "coeus"
 version = "0.1.0"
 description = "研報市場標籤分類 + pgvector 語意檢索（原型）"
 requires-python = ">=3.11"

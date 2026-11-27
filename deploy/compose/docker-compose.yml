@@ -1,4 +1,4 @@
-# 券商研報平台的單機部署：一份應用映像、多個角色＋pgvector。說明見 docs/CONTAINER_DEPLOYMENT.md。
+# Coeus 的單機部署：一份應用映像、多個角色＋pgvector。說明見 docs/CONTAINER_DEPLOYMENT.md。
 #
 #   cp .env.example .env               # 填必填值（不要把 .env 進版控）
 #   docker compose run --rm migrate    # 首次安裝：空庫建到 head；升級時先備份再升級

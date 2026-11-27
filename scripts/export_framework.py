@@ -68,7 +68,7 @@ INFO_NAME = "DELIVERY_INFO.json"
 SUMS_NAME = "SHA256SUMS"
 INFO_FORMAT = 1
 DEFAULT_OUT = "data/export"
-NAME_PREFIX = "report-mark-framework"
+NAME_PREFIX = "coeus-framework"
 # 交付版的 pytest 一律連不到 DB：DB 契約測試在沒有 DB 時 skip，絕不連到任何真實資料庫。
 UNREACHABLE_DB_URL = "postgresql+asyncpg://nobody:x@db.invalid:5432/none"
 PYTEST_TIMEOUT = 3600
@@ -781,7 +781,7 @@ def main(argv: list[str] | None = None) -> int:
     steps: list[Step] = []
     if not args.no_verify:
         m = parse_manifest(_blob_text(commit, MANIFEST_PATH), _blob_text(commit, OWNERSHIP_PATH))
-        work = Path(tempfile.mkdtemp(prefix="report-mark-export-"))
+        work = Path(tempfile.mkdtemp(prefix="coeus-export-"))
         try:
             steps = verify(tarball, m, frontend=args.frontend, work=work)
         finally:

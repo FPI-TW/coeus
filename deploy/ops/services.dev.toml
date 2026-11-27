@@ -1,4 +1,4 @@
-# report-mark 維運代理的 Service Catalog（開發環境）。格式與驗證規則見 ops_agent/catalog.py。
+# Coeus 維運代理的 Service Catalog（開發環境）。格式與驗證規則見 ops_agent/catalog.py。
 #
 # development catalog 只能列 report-mark-dev-* 的 unit 與 report-mark-dev* 的容器（代理載入時檢查），
 # socket 也和辦公室主機的 prod catalog 不同（/run/report-mark-ops-dev/agent.sock）：dev 代理結構上碰不到部署中的服務。

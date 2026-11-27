@@ -1,6 +1,6 @@
 # 架構：模組地圖與不變量
 
-本檔描述「券商研報平台」框架（機構專屬的設定在 profile<!-- export-omit:begin -->，廷豐是其中一個 profile 與一組主機層附加元件<!-- export-omit:end -->），是 `AGENTS.md` 架構不變量摘要的完整版：每個模組負責什麼、誰 import 誰、哪些設計是「刻意」的以及出處。它是 `tests/test_docs_contract.py` 掃描的 living doc；改名或刪檔要同步改這裡。**§ 編號被 `AGENTS.md`、程式註解與其他文件引用，不要重排。**
+本檔描述 Coeus（券商研報平台）框架（機構專屬的設定在 profile<!-- export-omit:begin -->，廷豐是其中一個 profile 與一組主機層附加元件<!-- export-omit:end -->），是 `AGENTS.md` 架構不變量摘要的完整版：每個模組負責什麼、誰 import 誰、哪些設計是「刻意」的以及出處。它是 `tests/test_docs_contract.py` 掃描的 living doc；改名或刪檔要同步改這裡。**§ 編號被 `AGENTS.md`、程式註解與其他文件引用，不要重排。**
 
 ## 1. 分工鐵律
 
