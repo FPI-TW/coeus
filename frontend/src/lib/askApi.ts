@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { getJSON } from './api'
-import { readSSE, type RawSSEEvent } from './readSSE'
+import { openSSE, readSSE, type RawSSEEvent } from './readSSE'
 import { conversationTurnSchema, qaVersionSchema, type ConversationTurn, type QaVersion } from './askSchemas'
 import type { Locale } from './useLocale'
 import { t } from '@/i18n'
@@ -10,6 +10,14 @@ export function streamAsk(
   signal: AbortSignal,
 ): AsyncGenerator<RawSSEEvent> {
   return readSSE('/api/ask', body, signal)
+}
+
+/**
+ * 接回進行中（或剛結束）的生成：先補送已產生的全部事件，再即時串流到結束。狀態碼確認過才回傳；
+ * 接不回（過期、web 重啟過、不是本人）時拋 ApiError(404)。
+ */
+export function resumeAsk(requestId: string, signal: AbortSignal): Promise<AsyncGenerator<RawSSEEvent>> {
+  return openSSE(`/api/ask/resume/${encodeURIComponent(requestId)}`, null, signal, 'GET')
 }
 
 export interface StopBody {
@@ -24,34 +32,15 @@ export interface StopBody {
   request_id?: string
 }
 
-// keepalive 請求的本體有 64 KiB 上限（瀏覽器規定，超過就整個送不出去），留一點餘裕。
-const KEEPALIVE_MAX_BYTES = 60_000
-
-function byteLength(body: StopBody): number {
-  return new TextEncoder().encode(JSON.stringify(body)).length
-}
-
-/** 關頁時送的停止請求要塞進 keepalive 的上限：先捨來源，再截短已生成的文字，問題本身一定留著。 */
-export function fitKeepalive(body: StopBody): StopBody {
-  if (byteLength(body) <= KEEPALIVE_MAX_BYTES) return body
-  let slim: StopBody = { ...body, sources: [], ext_sources: [] }
-  while (byteLength(slim) > KEEPALIVE_MAX_BYTES && slim.partial_answer) {
-    slim = { ...slim, partial_answer: slim.partial_answer.slice(0, Math.floor(slim.partial_answer.length / 2)) }
-  }
-  return slim
-}
-
-export async function stopAsk(body: StopBody, opts: { keepalive?: boolean } = {}): Promise<{ qa_id: string }> {
+export async function stopAsk(body: StopBody): Promise<{ qa_id: string }> {
   // 帶逾時：呼叫端已先把 UI 標成 stopped、事後才補 qaId（fail-open），這個請求
   // 掛住十幾秒只會讓晚到的回應更容易撞上世代檢查被丟棄，不如早點放棄。
-  // keepalive：重整或關頁時送出，請求要活過頁面卸載（useAskController 的 pagehide）。
   const resp = await fetch('/api/ask/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(opts.keepalive ? fitKeepalive(body) : body),
+    body: JSON.stringify(body),
     credentials: 'same-origin',
     signal: AbortSignal.timeout(10_000),
-    ...(opts.keepalive ? { keepalive: true } : {}),
   })
   if (!resp.ok) throw new Error(`stop failed: ${resp.status}`)
   return resp.json()

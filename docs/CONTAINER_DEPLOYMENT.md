@@ -265,7 +265,7 @@ Prometheus 文字格式，不登入。實作與約束在 `web/metrics.py` 的模
 | `report_mark_http_requests_total` | counter | `method`、`route`、`status` | HTTP 請求數（含認證擋下的 401／302 與 500） |
 | `report_mark_http_request_duration_seconds` | histogram | `method`、`route` | 請求耗時；SSE（問答）是整條串流的長度 |
 | `report_mark_http_requests_in_progress` | gauge | — | 處理中的請求（含開著的 SSE） |
-| `report_mark_qa_requests_total` | counter | `outcome` | 問答結局：`ok`、`llm_error`、`error`、`cancelled`（使用者中途停止或斷線）、`queue_full`（排隊滿回 429） |
+| `report_mark_qa_requests_total` | counter | `outcome` | 問答結局：`ok`、`llm_error`、`error`、`cancelled`（使用者按停止；沒帶 `request_id` 的舊用戶端另含斷線）、`queue_full`（排隊滿回 429） |
 | `report_mark_qa_llm_errors_total` | counter | `kind` | 問答因 LLM 不可用而失敗的類別（`auth`、`quota`、`config`、`content_filter`、`timeout`、`overloaded`、`network`…） |
 | `report_mark_llm_calls_total` | counter | `task`、`provider`、`result` | web 行程的 LLM 呼叫數（`result`＝`ok`／`error`） |
 | `report_mark_llm_call_failures_total` | counter | `task`、`provider`、`kind` | LLM 呼叫失敗的類別 |

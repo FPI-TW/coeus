@@ -390,7 +390,13 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 
 事件序：`queued`（排隊時，`scope`、`position`、`capacity`）→ `status`（`stage`、`thinking_ms`）→ `sources`（`n`、`report_id`、`file_name`、`title`、`market`、`report_date`、`is_latest`）→ `ext_sources`（網搜或受信任資料，`title`、`url`）→ `token`… → `followups` → `done`。婉拒（離題、時效、建議風險）走 `notice` 再 `done{notice_kind}`。傳輸層錯誤 `error{detail}`。心跳每 20 秒一行 SSE 註解。
 
-`POST /api/ask/stop` 把使用者中止時的部分答案與 `stages` 落 `qa_log`（`stopped=true`），回 `qa_id`。
+**背景生成與接回**：帶 `request_id` 時，整段生成（排隊、取名額、`answer_question`、錯誤轉 SSE、metrics）在背景 task 跑，事件依序暫存在行程內登錄表（`app/services/ask_runs.py`）；這條 HTTP 回應只是訂閱者，斷線（重整、關分頁、切對話）不中止生成，照常跑完、落庫成完整回答。同一個 `request_id` 已有 run 時回 409（在扣配額之前）。沒帶 `request_id` 的請求生成綁在連線上，斷線即停止。
+
+`GET /api/ask/resume/{request_id}` 接回同一次生成：先補送已產生的全部事件、再即時串流到結束，格式同 `/api/ask`（SSE、心跳、`X-Accel-Buffering: no`），可多個分頁同時接。run 結束後保留 `ASK_RESUME_TTL_SECONDS` 秒（預設 300）。只有提問者本人接得到；別人的、不存在、過期、web 重啟過的一律 404；單一 run 暫存超過 20,000 個事件或 2 MiB 時停止暫存（生成照跑、已連上的訂閱者照常收到），之後的接回也回 404。接回不計配額。
+
+前端（`frontend/src/lib/useAskController.ts`、`unfinishedAsk.ts`）：串流連線層失敗（含重整時瀏覽器先中斷串流）與 `pagehide` 只在 sessionStorage 留下接回資訊（5 分鐘內有效），不送停止；重整後先打 resume，200 就把那一題接在畫面上寫完（載入的對話裡已有同一列時不重複），404 或失敗才退回以留下的部分答案送停止、再載入對話。被取代的那一輪（開新對話、切對話）連線不中斷、在背景讀到 `done` 為止，側欄暫存列等那時再收。
+
+`POST /api/ask/stop` 是唯一會中止生成的路徑：帶 `request_id` 且那一輪還在背景跑時先取消它（最多等 10 秒收攏），再把使用者手上的部分答案與 `stages` 落 `qa_log`（`stopped=true`），回 `qa_id`；已結束的照既有規則以 `request_id` 收斂成同一列。
 
 **擁有者**：兩支端點寫入的 `qa_log.user_id` 是目前登入者（免登入開發模式為 NULL）。NULL 是個別帳號上線前的共用歷史，一般介面不可見。隔離有兩道：路由在開始串流前以 `deps.conversation_is_foreign`／`deps.qa_is_foreign` 檢查參照（列存在但不是你的＝404；查詢失敗＝503，不 fail-open；不存在照舊當新題／新串，因為 `_log_qa` 是 best-effort，寫入失敗後的續問不能被擋）；服務層每條 qa_log SQL 帶 `user_id IS NOT DISTINCT FROM :uid`（續問歷史、舊列 meta、版本數、停用／截斷 UPDATE 都只認自己的列），`request_id` 的收斂也只限同一擁有者（撞到別人的 `request_id` 寫入失敗）。`tests/test_qa_isolation.py` 以 AST 守門要求每個 qa_log 函式呼叫都帶 `user_id=`。
 

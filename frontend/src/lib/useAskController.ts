@@ -2,10 +2,13 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { askReducer, initialAskState, turnFromHistory, type AskAction, type AskState } from './askReducer'
 import { parseAskEvent } from './askSchemas'
-import { streamAsk, getConversation, sendFeedback, stopAsk, getQaVersions, type StopBody } from './askApi'
+import { streamAsk, resumeAsk, getConversation, sendFeedback, stopAsk, getQaVersions, type StopBody } from './askApi'
 import { ApiError } from './api'
+import type { RawSSEEvent } from './readSSE'
 import { clearPendingConversation, resolvePendingConversation, startPendingConversation } from './pendingConversation'
-import { clearUnfinished, flushUnfinished, saveUnfinished } from './unfinishedAsk'
+import {
+  clearUnfinished, flushUnfinished, peekUnfinished, saveUnfinished, stopUnfinished, takeResumable, type Unfinished,
+} from './unfinishedAsk'
 import { useLocale } from './useLocale'
 import { useWebSearch, useWebSearchPaused } from './useWebSearch'
 
@@ -13,6 +16,13 @@ let seq = 0
 const newId = () => `t${Date.now()}_${seq++}`
 
 interface StreamMeta { regenerateOf?: string; editOf?: string; fresh: boolean }
+
+/**
+ * 一條串流連線。`detached`＝畫面已換到別處（開新對話、切對話、又送出別題），但這一題還沒跑完：
+ * 後端的生成不綁連線、照跑到完成（只有按停止會中止），這條連線就在背景讀到 done 為止，
+ * 側欄的暫存列與清單等那時再收，期間不再動畫面。
+ */
+interface StreamHandle { ctrl: AbortController; detached: boolean }
 
 /** 新提問（submit，不是重生、不是編輯）：沒跑完也要落庫的那一種，理由見 abortAsk。 */
 function isFreshStream(meta: StreamMeta | null): boolean {
@@ -55,6 +65,7 @@ export function useAskController(): UseAskController {
   const convRef = useRef<string | null>(null)
   const reqId = useRef(0)
   const askCtrl = useRef<AbortController | null>(null)
+  const streamHandleRef = useRef<StreamHandle | null>(null)
   const streamTurnRef = useRef<string | null>(null)
   const streamRequestIdRef = useRef<string | null>(null)
   // 進行中串流的請求體中繼資料。stop() 要據此把 regenerate_of / edit_of 轉送給
@@ -101,7 +112,7 @@ export function useAskController(): UseAskController {
   // convRef、URL 同步、qaId 這些畫面上的副作用套上去就是把新狀態汙染回舊對話——只做落庫與側欄。
   const keepUnfinished = useCallback(async (turnId: string, body: StopBody, my: number) => {
     let qaId: string | null = null
-    // 先留一份給重整後的頁面：重整時串流先被中斷、走到這裡，這次請求又會跟著頁面卸載被取消（見 unfinishedAsk.ts）。
+    // 先留一份給重整後的頁面：送出之後馬上重整，這次請求會跟著頁面卸載被取消（見 unfinishedAsk.ts）。
     saveUnfinished(body)
     try {
       qaId = (await stopAsk(body)).qa_id
@@ -125,114 +136,233 @@ export function useAskController(): UseAskController {
     }
   }, [settlePending, dispatch])
 
-  // 被取代的串流（開新對話、換到別的對話）若是還沒跑完的新提問，照樣落庫，見 keepUnfinished。
-  // 重生與編輯不補存：它們取代的是已有的答案，失敗時畫面退回舊版，補存一個空的停止版反而蓋掉它；
-  // 要留下半成品請按停止。
+  // 被取代的串流（開新對話、換到別的對話、又送出別題）：還沒跑完就不中斷也不送停止——只有按停止才中止生成。
+  // 連線改在背景讀到 done（見 StreamHandle），那一題照常落庫成完整回答。已收到 done 的直接斷開。
   const abortAsk = useCallback(() => {
     const supersededTurn = streamTurnRef.current
     if (askCtrl.current) {
-      const unfinished = supersededTurn && isFreshStream(streamBodyRef.current) && !streamDoneRef.current
-        ? unfinishedBody(supersededTurn) : null
-      askCtrl.current.abort()
+      const handle = streamHandleRef.current
+      if (handle && supersededTurn && !streamDoneRef.current && streamRequestIdRef.current) handle.detached = true
+      else askCtrl.current.abort()
       askCtrl.current = null
+      streamHandleRef.current = null
       streamTurnRef.current = null
       streamRequestIdRef.current = null
       streamBodyRef.current = null
       // 取代中的串流不會再通過 reqId 檢查而觸發 ask-end；先結束它，避免 UI 永久 busy。
-      if (supersededTurn) {
-        dispatch({ type: 'ask-end', id: supersededTurn })
-        if (unfinished) void keepUnfinished(supersededTurn, unfinished, reqId.current)
-        else settlePending(supersededTurn, null)
-      }
+      if (supersededTurn) dispatch({ type: 'ask-end', id: supersededTurn })
     }
-  }, [settlePending, unfinishedBody, keepUnfinished, dispatch])
+  }, [dispatch])
 
-  // 重整或關頁：串流連線一斷，後端就不會替這一輪落庫。趁頁面還在時送出（keepalive 讓請求活過卸載），
-  // 另留一份給重整後的頁面補送：keepalive 那一次可能比重整後載入對話的請求晚到（見 unfinishedAsk.ts）。
+  // 重整或關頁：後端照跑，留下接回資訊給重整後的頁面（見 unfinishedAsk.ts）。不送停止。
+  // 實際瀏覽器多半是串流先被中斷（收尾那時已存好）、這裡才觸發，這裡只補上串流還連著的情況。
   useEffect(() => {
     const onPageHide = () => {
       const turnId = streamTurnRef.current
-      if (!turnId || !askCtrl.current || !isFreshStream(streamBodyRef.current) || streamDoneRef.current) return
-      const body = unfinishedBody(turnId)
-      saveUnfinished(body)
-      void stopAsk(body, { keepalive: true }).catch(() => { /* 頁面都要關了，重整後的頁面會補送 */ })
+      if (!turnId || !askCtrl.current || streamDoneRef.current || !streamRequestIdRef.current) return
+      saveUnfinished(unfinishedBody(turnId), { resume: true, fresh: isFreshStream(streamBodyRef.current) })
     }
     window.addEventListener('pagehide', onPageHide)
     return () => window.removeEventListener('pagehide', onPageHide)
   }, [unfinishedBody])
 
-  // 重整前留下的那一輪：補送之後側欄重抓一次。沒帶 ?c 的頁面（新對話的第一題）不會走 loadConversation，
-  // 只有這裡會送。
+  // 讀一條串流（新提問、重生、編輯、重整後接回都走這裡），事件寫到 turnId 那一輪。
+  // loadedIds：接回時載入的對話裡已有的列。done 的 qa_id 已在其中＝重整前就已落庫，載入的那一列就是它，
+  // 拿掉接回的這一輪（之後的追問建議改給那一列），同一題不出現兩次。
+  const consume = useCallback(async (opts: {
+    turnId: string; my: number; handle: StreamHandle; creating: boolean
+    events: AsyncIterable<RawSSEEvent>
+    loadedIds?: Set<string>
+  }) => {
+    const { my, handle, creating, loadedIds } = opts
+    let target = opts.turnId
+    let done = false
+    // 背景讀完的串流（被取代的那一題）：只收側欄。
+    const settleDetached = (conversationId: string | null) => {
+      if (creating) settlePending(opts.turnId, conversationId)
+      else void qc.invalidateQueries({ queryKey: ['conversations'] })
+    }
+    // 收尾（仍是目前這一輪時）。內容要在清掉 stream*Ref 之前取；回傳的是畫面標好結束狀態之後才做的事。
+    // - interrupted（連線層失敗，含重整時串流先被中斷）：後端照跑，只留接回資訊。
+    // - 其餘沒收到 done 就結束的新提問（失敗、排隊已滿）：照樣落庫（/api/ask/stop），對話才留在側欄「最近」。
+    //   重生與編輯不補存：它們取代的是已有的答案，失敗時畫面退回舊版，補存一個空的停止版反而蓋掉它。
+    const finish = (interrupted: boolean) => {
+      const meta = streamBodyRef.current
+      const body = done ? null : unfinishedBody(target)
+      streamTurnRef.current = null; streamRequestIdRef.current = null; streamBodyRef.current = null
+      streamHandleRef.current = null
+      return () => {
+        if (body && interrupted && body.request_id) {
+          saveUnfinished(body, { resume: true, fresh: isFreshStream(meta) })
+          if (creating) settlePending(target, null)
+        } else if (body && isFreshStream(meta)) void keepUnfinished(target, body, my)
+        else if (creating && !done) settlePending(target, null)
+      }
+    }
+    try {
+      for await (const raw of opts.events) {
+        const ev = parseAskEvent(raw)
+        if (my !== reqId.current) {
+          if (!handle.detached) return
+          if (ev?.event === 'done') {
+            done = true
+            settleDetached(ev.data.conversation_id)
+            handle.ctrl.abort()
+            return
+          }
+          continue
+        }
+        if (!ev) continue
+        if (ev.event === 'done') {
+          done = true
+          streamDoneRef.current = true
+          if (!convRef.current) {
+            convRef.current = ev.data.conversation_id
+            setConversationId(ev.data.conversation_id)
+          }
+          if (creating) settlePending(target, ev.data.conversation_id)
+          else void qc.invalidateQueries({ queryKey: ['conversations'] })
+          const qaId = ev.data.qa_id
+          if (qaId && qaId !== target && loadedIds?.has(qaId)) {
+            dispatch({ type: 'remove', id: target })
+            target = qaId
+            streamTurnRef.current = qaId
+            continue
+          }
+        }
+        if (ev.event === 'followups') dispatch({ type: 'followups', id: target, data: ev.data })
+        else dispatch({ type: 'ask-event', id: target, event: ev })
+      }
+      if (my === reqId.current) {
+        const after = finish(false)
+        dispatch({ type: 'ask-end', id: target })
+        after()
+      } else if (handle.detached && !done) settleDetached(null)
+    } catch (err) {
+      if (my === reqId.current) {
+        const after = finish(!(err instanceof ApiError))
+        // 429＝排隊已滿，後端連 SSE 都沒開。這時 'ask-end' 的「查詢逾時或失敗」是
+        // 錯的診斷，會讓人一直重按；改用後端給的原因，使用者才知道要等一下。
+        if (err instanceof ApiError && err.status === 429) {
+          dispatch({ type: 'ask-event', id: target, event: { event: 'error', data: { detail: err.message } } })
+        } else {
+          dispatch({ type: 'ask-end', id: target })
+        }
+        after()
+      } else if (handle.detached && !done) settleDetached(null)
+    }
+  }, [settlePending, unfinishedBody, keepUnfinished, qc, dispatch])
+
+  const begin = useCallback((turnId: string, handle: StreamHandle, requestId: string, meta: StreamMeta) => {
+    askCtrl.current = handle.ctrl
+    streamHandleRef.current = handle
+    streamTurnRef.current = turnId
+    streamRequestIdRef.current = requestId
+    streamBodyRef.current = meta
+    streamDoneRef.current = false
+  }, [])
+
+  // 接回重整前沒跑完的那一輪（unfinishedAsk.ts）。convId＝要載入的對話；null＝新對話的第一題（畫面是空的）。
+  // 接不回（404：過期、web 重啟過）就退回以留下的部分答案送停止，回傳 false，由呼叫端照常載入對話。
+  // 回傳 true＝已處理（含已載入對話）。載入對話失敗照樣拋給呼叫端。
+  const resumeUnfinished = useCallback(async (u: Unfinished, convId: string | null, my: number): Promise<boolean> => {
+    const requestId = u.body.request_id
+    if (!requestId) { await stopUnfinished(u); return false }
+    const handle: StreamHandle = { ctrl: new AbortController(), detached: false }
+    let events: AsyncIterable<RawSSEEvent>
+    try {
+      events = await resumeAsk(requestId, handle.ctrl.signal)
+    } catch {
+      await stopUnfinished(u)
+      return false
+    }
+    // 期間使用者已換到別處：這一題在後端照跑完，不必接到畫面上。
+    if (my !== reqId.current) { handle.ctrl.abort(); return true }
+    let loadedIds: Set<string> | undefined
+    if (convId) {
+      try {
+        const items = await getConversation(convId)
+        if (my !== reqId.current) { handle.ctrl.abort(); return true }
+        dispatch({ type: 'load', turns: items.map(turnFromHistory) })
+        loadedIds = new Set(items.map(item => item.id))
+      } catch (err) {
+        handle.ctrl.abort()
+        throw err
+      }
+    }
+    const meta: StreamMeta = { regenerateOf: u.body.regenerate_of, editOf: u.body.edit_of, fresh: u.fresh }
+    const question = u.body.question
+    let turnId: string
+    const ref = meta.regenerateOf ?? meta.editOf
+    if (ref) {
+      // 重生／編輯的那一輪：還沒跑完時對話裡是舊版，接在它上面。找不到＝已經跑完（舊版已停用），載入的就是新版。
+      const turn = stateRef.current.turns.find(item => item.qaId === ref || item.id === ref || item.rootQaId === ref)
+      if (!turn) { handle.ctrl.abort(); return true }
+      turnId = turn.id
+      if (meta.regenerateOf) dispatch({ type: 'regenerate-start', id: turnId })
+      else {
+        dispatch({ type: 'truncate-after', id: turnId })
+        dispatch({ type: 'submit-edit', id: turnId, question })
+      }
+    } else {
+      turnId = newId()
+      dispatch({ type: 'submit', id: turnId, question, startedAt: Date.now() })
+    }
+    begin(turnId, handle, requestId, meta)
+    const creating = !convId
+    if (creating) startPendingConversation(qc, turnId, question)
+    void consume({ turnId, my, handle, creating, events, loadedIds })
+    return true
+  }, [begin, consume, qc, dispatch])
+
+  // 要接回的那一份不是這一串的（重整後沒回到那一串）：還接得回就不管它（後端照跑完），接不回才補送停止。
+  const settleElsewhere = useCallback(async (u: Unfinished) => {
+    const ctrl = new AbortController()
+    try {
+      if (!u.body.request_id) throw new Error('no request_id')
+      await resumeAsk(u.body.request_id, ctrl.signal)
+      ctrl.abort()
+    } catch {
+      await stopUnfinished(u)
+      void qc.invalidateQueries({ queryKey: ['conversations'] })
+    }
+  }, [qc])
+
+  // 重整前留下的那一輪。沒帶 ?c 的頁面（新對話的第一題）不會走 loadConversation，只有這裡會處理：
+  // 要接回的就接到空白畫面上；要停止的補送之後側欄重抓一次。帶 ?c 的由 loadConversation 處理。
   useEffect(() => {
+    const u = peekUnfinished()
+    if (u?.resume && !u.body.conversation_id) {
+      const taken = takeResumable(null)
+      if (!taken) return
+      const my = ++reqId.current
+      void resumeUnfinished(taken, null, my).then(
+        ok => { if (!ok) void qc.invalidateQueries({ queryKey: ['conversations'] }) },
+        () => { /* 沒有要載入的對話，不會走到這裡 */ },
+      )
+      return
+    }
     void flushUnfinished().then(flushed => {
       if (flushed) void qc.invalidateQueries({ queryKey: ['conversations'] })
     })
-  }, [qc])
+  }, [qc, resumeUnfinished])
 
 
   // 共用串流：submit/regenerate/editResubmit 皆走此；fresh＝submit 的新提問。
   const runStream = useCallback((turnId: string, body: { question: string; conversation_id?: string; regenerate_of?: string; edit_of?: string }, fresh = false) => {
     abortAsk()
     const my = ++reqId.current
-    const ctrl = new AbortController()
+    const handle: StreamHandle = { ctrl: new AbortController(), detached: false }
     const requestId = newRequestId()
-    askCtrl.current = ctrl
-    streamTurnRef.current = turnId
-    streamRequestIdRef.current = requestId
-    streamBodyRef.current = { regenerateOf: body.regenerate_of, editOf: body.edit_of, fresh }
-    streamDoneRef.current = false
+    begin(turnId, handle, requestId, { regenerateOf: body.regenerate_of, editOf: body.edit_of, fresh })
     // 沒帶 conversation_id＝這一輪會開出新的一串：送出當下就讓它出現在側欄「最近」，不等跑完。
     const creating = !body.conversation_id
     if (creating) startPendingConversation(qc, turnId, body.question)
-    // 收尾（仍是目前這一輪時）：沒收到 done 就結束的新提問（失敗、提早斷線、排隊已滿）照樣落庫，
-    // 理由見 abortAsk。內容要在清掉 stream*Ref 之前取；回傳的是畫面標好結束狀態之後才做的事。
-    const finish = () => {
-      const done = streamDoneRef.current
-      const unfinished = !done && isFreshStream(streamBodyRef.current) ? unfinishedBody(turnId) : null
-      streamTurnRef.current = null; streamRequestIdRef.current = null; streamBodyRef.current = null
-      return () => {
-        if (unfinished) void keepUnfinished(turnId, unfinished, my)
-        else if (creating && !done) settlePending(turnId, null)
-      }
-    }
-    void (async () => {
-      try {
-        for await (const raw of streamAsk({ ...body, request_id: requestId, locale, web }, ctrl.signal)) {
-          if (my !== reqId.current) return
-          const ev = parseAskEvent(raw)
-          if (!ev) continue
-          if (ev.event === 'done') {
-            streamDoneRef.current = true
-            if (!convRef.current) {
-              convRef.current = ev.data.conversation_id
-              setConversationId(ev.data.conversation_id)
-            }
-            if (creating) settlePending(turnId, ev.data.conversation_id)
-            else void qc.invalidateQueries({ queryKey: ['conversations'] })
-          }
-          if (ev.event === 'followups') dispatch({ type: 'followups', id: turnId, data: ev.data })
-          else dispatch({ type: 'ask-event', id: turnId, event: ev })
-        }
-        if (my === reqId.current) {
-          const after = finish()
-          dispatch({ type: 'ask-end', id: turnId })
-          after()
-        }
-      } catch (err) {
-        if (my === reqId.current) {
-          const after = finish()
-          // 429＝排隊已滿，後端連 SSE 都沒開。這時 'ask-end' 的「查詢逾時或失敗」是
-          // 錯的診斷，會讓人一直重按；改用後端給的原因，使用者才知道要等一下。
-          if (err instanceof ApiError && err.status === 429) {
-            dispatch({ type: 'ask-event', id: turnId, event: { event: 'error', data: { detail: err.message } } })
-          } else {
-            dispatch({ type: 'ask-end', id: turnId })
-          }
-          after()
-        }
-      }
-    })()
-  }, [abortAsk, settlePending, unfinishedBody, keepUnfinished, qc, locale, web, dispatch])
+    void consume({
+      turnId, my, handle, creating,
+      events: streamAsk({ ...body, request_id: requestId, locale, web }, handle.ctrl.signal),
+    })
+  }, [abortAsk, begin, consume, qc, locale, web])
 
   const submit = useCallback((question: string) => {
     const q = question.trim()
@@ -248,6 +378,7 @@ export function useAskController(): UseAskController {
     const body = turnId ? unfinishedBody(turnId) : null
     const my = ++reqId.current
     askCtrl.current?.abort(); askCtrl.current = null
+    streamHandleRef.current = null
     streamTurnRef.current = null
     streamRequestIdRef.current = null
     streamBodyRef.current = null
@@ -299,9 +430,15 @@ export function useAskController(): UseAskController {
     convRef.current = id
     setConversationId(id)
     try {
-      // 重整前沒跑完的那一輪先落庫再載入，否則載入的對話裡可能還沒有它（見 unfinishedAsk.ts）。
+      // 重整前按了停止、還沒送到的那一輪先落庫再載入，否則載入的對話裡可能還沒有它（見 unfinishedAsk.ts）。
       await flushUnfinished()
       if (my !== reqId.current) return
+      // 重整前沒跑完的那一輪：是這一串的就接回畫面上寫完（接不回才送停止、照常載入）；別串的另外收。
+      const u = takeResumable()
+      if (u && (u.body.conversation_id ?? null) === id) {
+        if (await resumeUnfinished(u, id, my)) return
+        if (my !== reqId.current) return
+      } else if (u) void settleElsewhere(u)
       const items = await getConversation(id)
       if (my !== reqId.current) return
       dispatch({ type: 'load', turns: items.map(turnFromHistory) })
@@ -315,7 +452,7 @@ export function useAskController(): UseAskController {
       }
       /* 其他失敗不破壞現況 */
     }
-  }, [abortAsk, dispatch])
+  }, [abortAsk, resumeUnfinished, settleElsewhere, dispatch])
 
   const newConversation = useCallback(() => {
     abortAsk()
