@@ -40,6 +40,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `chunk.py` | 段落邊界切塊，600 字元、80 重疊 |
 | `textnorm.py` | `clean_text`（折換行，檢索片段用）、`clean_extracted`（顯示用）、`norm_for_match`（與 DB 生成欄 `content_norm` 逐字等價） |
 | `answer.py` | RAG 問答主編排、`select_reports`、`build_context`、`qa_log` 落庫、對話與版本管理 |
+| `ask_runs.py` | 進行中的問答生成登錄表（以 `request_id` 為鍵、行程內記憶體）：事件暫存、多訂閱者、結束後保留 `ASK_RESUME_TTL_SECONDS`、單一 run 的事件數與位元組上限（超過照跑、接不回）、取消 |
 | `agentic_qa.py` | 多輪「評估 → 補查」迴圈；頂層只准 import 葉模組 |
 | `scope_router.py` | 五類路由：`off_topic`、`overview`、`corpus_qa`、`time_sensitive`、`advice_risk`；確定性 `resolve_overview_route`（零 LLM）→ `precheck_route` 詞表 → LLM `classify_non_overview`（非 overview 四類）；續問改寫兼分類 `condense_and_route`；fail-open 落點 `corpus_qa` |
 | `overview.py` | 枚舉／聚合題的全語料分面統計，零 LLM |
@@ -204,6 +205,7 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 - `DEV_NO_AUTH=1` 三條件同時成立才放行：旗標在環境檔載入前已在 `os.environ`、對端與 URL hostname 皆 loopback、無任何代理 header；放行時刻意不發 cookie。`SKIP_WARMUP` 在 lifespan 讀 `os.environ`、判 `== "1"`，晚於載入 `.env`，所以寫進 `.env` 會生效（沒有快照保護）。兩者都不要寫進環境檔。
 - lifespan：`assert_single_worker`（偵測到多 worker 拒絕啟動，偵測不到放行）→ `dev_mode.log_banner()` 與併發設定日誌 → `assert_pgvector_version`（低於 0.8 fail-closed，連不上 DB 放行交給 `/healthz`）→ LLM 自檢（`_check_llm_models`：WARNING 記 provider 與各任務解析結果；缺目前 provider 的金鑰、白名單外的模型名（含 `claude-*`）、`ASK_ENABLE_WEB` 開著卻沒有網搜後端記 ERROR；不擋啟動：讀取類功能不需要 LLM）→ 背景暖機（embed 再 rerank，**必須依序**，兩執行緒同時首次 import transformers 會競態）。關機時取消暖機並 `llm_http.aclose()`。
 - 併發閘只剩一個：`/api/ask` 容量 3 寫死在 `web/routers/ask.py` 的 `_ASK_GATE`：超過容量先排隊（SSE 先送 `queued` 事件），排隊人數達 `ASK_MAX_QUEUE`（預設 20，0＝不限）才在送出 200 之前回 429 ＋ `Retry-After: 30`（SSE 開始後改不了狀態碼）。問答忠實度抽查背景任務的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT` 同樣是行程內狀態。都是 per-process，lifespan 擋多 worker。
+- 問答生成與連線解耦：帶 `request_id` 的 `/api/ask` 在背景 task 跑完整段生成（含取名額與 metrics），事件寫進 `web/routers/ask.py` 的 `_ASK_RUNS`（`app/services/ask_runs.py`），HTTP 回應與 `GET /api/ask/resume/{request_id}` 都只是訂閱者；訂閱者斷線不取消生成，只有 `/api/ask/stop` 會（取消並等它收攏後才寫停止列）。`report_mark_qa_requests_total{outcome="cancelled"}` 因此只代表被停止（沒帶 `request_id` 的仍含斷線）。web 重啟後全部消失。沒帶 `request_id` 的請求生成綁在連線上。
 - 對外 API（`/external/v1/*`）：`require_login` middleware 對 `/external/` 前綴完全放行（排在 dev_mode 之前，不查也不發 session cookie），認證只由 `web/external_auth.py` 的 dependency 負責；反過來，其餘路徑一律不認 Bearer。每條對外路由掛 `require_api_client("<scope>")`，`tests/test_external_auth.py` 結構性檢查。搜尋以用戶端的 entitlement 呼叫 `hybrid_search`（請求帶的過濾先與 entitlement 取交集，交集為空不打檢索）；`file-url` 重新查研報，同時帶 `visible_report_sql` 與 entitlement 條件，不信任先前的搜尋結果，查無、隱藏、草稿、授權外一律 404。連結有效期 `EXTERNAL_FILE_URL_TTL_SECONDS`（預設 600、限 60..3600）。契約見 `docs/WORKFLOW.md`「對外 API」。
 - SSE：`deps._with_heartbeat` 每 `SSE_HEARTBEAT_INTERVAL`（20 秒）插註解行，因 nginx `proxy_read_timeout` 60 秒；前端 `readSSE.parseFrame` 對無 `data:` 的框回 null。
 - `/healthz` 只探 DB（`SELECT 1`，3 秒逾時，結果快取 5 秒），503 而非 200 加 degraded 欄位。存在理由：讓外部監控分辨「DB 掛了」與「站台正常」（登入與每個請求的 session 查驗都要 DB，DB 掛掉時其餘路徑一律 503 或登入失敗）。它必須同時在路由與白名單，只掛路由等於永遠 302。回應只有 `status` 一個鍵是釘死的不變量。<!-- export-omit:begin -->消費端有兩個：本機 `scripts/check_web_health.sh`，以及從本機打對外網址、再以本機 origin 做失敗歸因的 `scripts/check_edge_health.sh`（細節見 `docs/EXTERNAL_ACCESS.md`）。<!-- export-omit:end -->
@@ -360,7 +362,7 @@ DB 連線數算式（`.env.example`）：`worker 數 × (DB_POOL_SIZE + DB_MAX_O
 
 ### 11.4 管理面 SSE
 
-- **現況**：管理後台沒有 SSE 或其他長連線端點，即時性一律靠輪詢（TanStack Query 的 `refetchInterval`，例如管線分頁 15 秒）。唯一的 SSE 是問答 `/api/ask`，不受影響、也不擴充到管理面。
+- **現況**：管理後台沒有 SSE 或其他長連線端點，即時性一律靠輪詢（TanStack Query 的 `refetchInterval`，例如管線分頁 15 秒）。SSE 只有問答 `/api/ask` 與 `/api/ask/resume/{request_id}`，不受影響、也不擴充到管理面。
 - **不啟用的理由**：
   - auth 的設計是每個請求以 `deps.accounts.resolve_session` 查 DB、不快取，停用、強制登出、降級、撤銷 session 都在下一個請求生效；長連線只在建立時驗一次身分，撤銷到斷線之間會繼續推送管理資料。
   - nginx `proxy_read_timeout` 60 秒，要靠心跳（`deps._with_heartbeat`）撐住連線。
