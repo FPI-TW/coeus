@@ -5,11 +5,13 @@ import { afterEach, expect, test, vi } from 'vitest'
 import type { RawSSEEvent } from './readSSE'
 
 const streamAsk = vi.fn()
+const resumeAsk = vi.fn()
 const sendFeedback = vi.fn(async () => {})
 // 必須列齊 controller 用到的每一個匯出：vi.mock 整包取代模組，漏掉的是 undefined，
 // 而呼叫它拋的 TypeError 常被 fail-open 的 catch 吞掉 → 測試綠、功能死。
 vi.mock('./askApi', () => ({
   streamAsk: (...a: unknown[]) => streamAsk(...a),
+  resumeAsk: (...a: unknown[]) => resumeAsk(...a),
   getConversation: vi.fn(),
   getQaVersions: vi.fn(async () => []),
   stopAsk: vi.fn(async () => ({ qa_id: 'qa-stop' })),
@@ -262,7 +264,20 @@ test('重生失敗不補存：畫面退回舊版，補一個空的停止版會�
   expect(stopAsk).not.toHaveBeenCalled()
 })
 
-test('重整或關頁（pagehide）時還沒跑完的新提問：以 keepalive 送出停止請求', async () => {
+const savedUnfinished = () => JSON.parse(sessionStorage.getItem('tf.ask.unfinished') ?? 'null')
+
+// 可控的串流：break() 模擬連線層失敗（重整時瀏覽器先中斷串流的 fetch）。
+function breakable(first?: RawSSEEvent) {
+  let breakStream!: () => void
+  const gen = (async function* () {
+    if (first) yield first
+    await new Promise<void>((_, rej) => { breakStream = () => rej(new TypeError('Failed to fetch')) })
+    yield { event: 'token', data: '不會到' } as RawSSEEvent
+  })()
+  return { gen, break: () => breakStream() }
+}
+
+test('重整或關頁（pagehide）時還沒跑完的那一輪：只留接回資訊，不送停止（後端照跑）', async () => {
   const g = gated([{ event: 'token', data: '半句' }, { event: 'token', data: '沒送到' }])
   streamAsk.mockReturnValue(g.gen)
   const { wrapper } = withQueryClient()
@@ -271,25 +286,89 @@ test('重整或關頁（pagehide）時還沒跑完的新提問：以 keepalive �
   await act(async () => { g.release(); await Promise.resolve() })
   await waitFor(() => expect(result.current.state.turns[0].answer).toBe('半句'))
   window.dispatchEvent(new Event('pagehide'))
-  expect(stopAsk).toHaveBeenCalledWith(expect.objectContaining({ question: 'Q', partial_answer: '半句' }), { keepalive: true })
+  expect(stopAsk).not.toHaveBeenCalled()
+  const saved = savedUnfinished()
+  expect(saved).toMatchObject({ resume: true, fresh: true, body: { question: 'Q', partial_answer: '半句', conversation_id: null } })
+  expect(saved.body.request_id).toBe(streamAsk.mock.calls[0][0].request_id)
 })
 
-test('既有對話裡追問、等回答時重整：重整後先補送停止、落庫之後才載入對話，那一題不會消失', async () => {
-  // 重整前：載入舊對話 c1，追問 Q2 還在思考中就重整。
+test('真實瀏覽器的重整順序：串流先被中斷、pagehide 才觸發——不送停止，接回資訊在中斷時就存好', async () => {
   vi.mocked(getConversation).mockResolvedValueOnce([])
-  const g = gated([{ event: 'token', data: '沒送到' }])
-  streamAsk.mockReturnValue(g.gen)
+  const s1 = breakable({ event: 'token', data: '前半' })
+  streamAsk.mockReturnValue(s1.gen)
+  const { result } = renderHook(() => useAskController(), { wrapper: withQueryClient().wrapper })
+  await act(async () => { await result.current.loadConversation('c1') })
+  act(() => result.current.submit('Q2'))
+  await waitFor(() => expect(result.current.state.turns[0]?.answer).toBe('前半'))
+  await act(async () => { s1.break(); await Promise.resolve() })
+  await waitFor(() => expect(savedUnfinished()).not.toBeNull())
+  window.dispatchEvent(new Event('pagehide'))
+  expect(stopAsk).not.toHaveBeenCalled()
+  expect(savedUnfinished()).toMatchObject({ resume: true, body: { question: 'Q2', conversation_id: 'c1', partial_answer: '前半' } })
+})
+
+const turnRow = (id: string, question: string, answer: string) => ({
+  id, question, answer, created_at: null, feedback: null, sources: [], ext_sources: [], is_offtopic: false,
+  notice_kind: null, thinking_ms: null, stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false,
+})
+
+/** 重整前：在 c1 追問 Q2，串流被中斷（重整），留下接回資訊。回傳那一輪的 request_id。 */
+async function leaveUnfinishedFollowUp(): Promise<string> {
+  vi.mocked(getConversation).mockResolvedValueOnce([turnRow('qa1', 'Q1', '第一題答案')])
+  const s1 = breakable({ event: 'token', data: '前半' })
+  streamAsk.mockReturnValueOnce(s1.gen)
   const before = renderHook(() => useAskController(), { wrapper: withQueryClient().wrapper })
   await act(async () => { await before.result.current.loadConversation('c1') })
   act(() => before.result.current.submit('Q2'))
-  window.dispatchEvent(new Event('pagehide'))
-  const kept = vi.mocked(stopAsk).mock.calls[0][0]
-  expect(kept).toMatchObject({ question: 'Q2', conversation_id: 'c1', partial_answer: '' })
+  await waitFor(() => expect(before.result.current.state.turns[1]?.answer).toBe('前半'))
+  await act(async () => { s1.break(); await Promise.resolve() })
+  await waitFor(() => expect(savedUnfinished()).not.toBeNull())
   before.unmount()
-  vi.mocked(stopAsk).mockClear()
   vi.mocked(getConversation).mockClear()
+  return savedUnfinished().body.request_id
+}
 
-  // 重整後：keepalive 那一次還沒到後端。補送的停止回來之前不能抓對話。
+test('既有對話裡追問、等回答時重整：重整後接回同一次生成，那一題接在畫面上寫完，不送停止', async () => {
+  const requestId = await leaveUnfinishedFollowUp()
+  // 後端補送已產生的事件，再即時串流到 done。
+  const g = gated([
+    { event: 'token', data: '前半' },
+    { event: 'token', data: '後半' },
+    { event: 'done', data: { conversation_id: 'c1', qa_id: 'qa2' } },
+  ])
+  resumeAsk.mockResolvedValueOnce(g.gen)
+  vi.mocked(getConversation).mockResolvedValueOnce([turnRow('qa1', 'Q1', '第一題答案')])
+  const after = renderHook(() => useAskController(), { wrapper: withQueryClient().wrapper })
+  await act(async () => { await after.result.current.loadConversation('c1') })
+  expect(resumeAsk).toHaveBeenCalledWith(requestId, expect.any(AbortSignal))
+  expect(getConversation).toHaveBeenCalledWith('c1')
+  for (let i = 0; i < 3; i++) await act(async () => { g.release(); await Promise.resolve() })
+  await waitFor(() => expect(after.result.current.state.turns[1]?.phase).toBe('done'))
+  const turns = after.result.current.state.turns
+  expect(turns).toHaveLength(2)
+  expect(turns[1]).toMatchObject({ question: 'Q2', answer: '前半後半', qaId: 'qa2' })
+  expect(stopAsk).not.toHaveBeenCalled()
+  expect(savedUnfinished()).toBeNull()
+})
+
+test('接回時那一題重整前就已落庫（載入的對話裡已有）：不重複出現', async () => {
+  await leaveUnfinishedFollowUp()
+  resumeAsk.mockResolvedValueOnce((async function* () {
+    yield { event: 'token', data: '完整答案' } as RawSSEEvent
+    yield { event: 'done', data: { conversation_id: 'c1', qa_id: 'qa2' } } as RawSSEEvent
+    yield { event: 'followups', data: ['下一題？'] } as RawSSEEvent
+  })())
+  vi.mocked(getConversation).mockResolvedValueOnce([turnRow('qa1', 'Q1', '第一題答案'), turnRow('qa2', 'Q2', '完整答案')])
+  const after = renderHook(() => useAskController(), { wrapper: withQueryClient().wrapper })
+  await act(async () => { await after.result.current.loadConversation('c1') })
+  await waitFor(() => expect(after.result.current.state.turns[1]?.followups).toEqual(['下一題？']))
+  expect(after.result.current.state.turns.map(t => t.id)).toEqual(['qa1', 'qa2'])
+})
+
+test('接不回（404：過期或 web 重啟過）：退回以留下的那一份送停止，落庫之後才載入對話', async () => {
+  await leaveUnfinishedFollowUp()
+  const kept = savedUnfinished().body
+  resumeAsk.mockRejectedValueOnce(new ApiError(404, 'HTTP 404'))
   let landStop!: () => void
   vi.mocked(stopAsk).mockImplementationOnce(() => new Promise(res => { landStop = () => res({ qa_id: 'qa-stop' }) }))
   vi.mocked(getConversation).mockResolvedValueOnce([])
@@ -297,59 +376,93 @@ test('既有對話裡追問、等回答時重整：重整後先補送停止、�
   let loading!: Promise<void>
   act(() => { loading = after.result.current.loadConversation('c1') })
   await waitFor(() => expect(stopAsk).toHaveBeenCalledTimes(1))
-  // 同一份 request_id：後端唯一索引把它與 keepalive 那一次收斂成同一列。
   expect(vi.mocked(stopAsk).mock.calls[0]).toEqual([kept])
   expect(getConversation).not.toHaveBeenCalled()
   await act(async () => { landStop(); await loading })
   expect(getConversation).toHaveBeenCalledWith('c1')
-  // 只補送一次：再載入（或下一次重整）不會再送。
+  // 只處理一次：再載入不會再送。
   vi.mocked(getConversation).mockResolvedValueOnce([])
   await act(async () => { await after.result.current.loadConversation('c2') })
   expect(stopAsk).toHaveBeenCalledTimes(1)
+  expect(resumeAsk).toHaveBeenCalledTimes(1)
 })
 
-test('真實瀏覽器的重整順序：串流先被中斷、pagehide 才觸發，那一題照樣在重整後補送落庫', async () => {
-  // 重整前：載入舊對話 c1，追問 Q2；重整時瀏覽器先中斷串流的 fetch（收尾當成斷線落庫，那次請求又被
-  // 頁面卸載取消，永遠不回來），pagehide 觸發時已經沒有進行中的那一輪。
-  vi.mocked(getConversation).mockResolvedValueOnce([])
-  let breakStream!: () => void
-  streamAsk.mockReturnValue((async function* () {
-    await new Promise<void>((_, rej) => { breakStream = () => rej(new TypeError('Failed to fetch')) })
-    yield { event: 'token', data: '不會到' } as RawSSEEvent
+test('新對話的第一題重整：掛載時接回到空白畫面上，done 之後補上 conversationId（網址 ?c=）', async () => {
+  const s1 = breakable({ event: 'token', data: '前半' })
+  streamAsk.mockReturnValueOnce(s1.gen)
+  const before = renderHook(() => useAskController(), { wrapper: withQueryClient().wrapper })
+  act(() => before.result.current.submit('新題'))
+  await waitFor(() => expect(before.result.current.state.turns[0]?.answer).toBe('前半'))
+  await act(async () => { s1.break(); await Promise.resolve() })
+  await waitFor(() => expect(savedUnfinished()).not.toBeNull())
+  before.unmount()
+
+  resumeAsk.mockResolvedValueOnce((async function* () {
+    yield { event: 'token', data: '前半' } as RawSSEEvent
+    yield { event: 'token', data: '後半' } as RawSSEEvent
+    yield { event: 'done', data: { conversation_id: 'c-new', qa_id: 'qa-new' } } as RawSSEEvent
   })())
-  vi.mocked(stopAsk).mockImplementationOnce(() => new Promise(() => { /* 被頁面卸載取消 */ }))
+  const { client, wrapper } = withQueryClient()
+  const after = renderHook(() => useAskController(), { wrapper })
+  await waitFor(() => expect(after.result.current.conversationId).toBe('c-new'))
+  expect(after.result.current.state.turns).toHaveLength(1)
+  expect(after.result.current.state.turns[0]).toMatchObject({ question: '新題', answer: '前半後半', phase: 'done' })
+  expect(getConversation).not.toHaveBeenCalled()
+  expect(stopAsk).not.toHaveBeenCalled()
+  await waitFor(() => expect(pendingOf(client)).toBeNull())
+})
+
+test('重生途中重整：接回時接在被重生的那一輪上', async () => {
+  vi.mocked(getConversation).mockResolvedValueOnce([turnRow('qa1', 'Q1', '舊版')])
+  const s1 = breakable({ event: 'token', data: '新' })
+  streamAsk.mockReturnValueOnce(s1.gen)
   const before = renderHook(() => useAskController(), { wrapper: withQueryClient().wrapper })
   await act(async () => { await before.result.current.loadConversation('c1') })
-  act(() => before.result.current.submit('Q2'))
-  await act(async () => { breakStream(); await Promise.resolve() })
-  await waitFor(() => expect(stopAsk).toHaveBeenCalledTimes(1))
-  const kept = vi.mocked(stopAsk).mock.calls[0][0]
-  expect(kept).toMatchObject({ question: 'Q2', conversation_id: 'c1' })
-  window.dispatchEvent(new Event('pagehide'))
-  expect(stopAsk).toHaveBeenCalledTimes(1)
+  act(() => before.result.current.regenerate('qa1', 'qa1', 'Q1'))
+  await waitFor(() => expect(before.result.current.state.turns[0]?.answer).toBe('新'))
+  await act(async () => { s1.break(); await Promise.resolve() })
+  await waitFor(() => expect(savedUnfinished()).toMatchObject({ resume: true, fresh: false, body: { regenerate_of: 'qa1' } }))
   before.unmount()
-  vi.mocked(stopAsk).mockClear()
-  vi.mocked(getConversation).mockClear()
 
-  // 重整後：先補送同一份停止，回來之後才載入對話。
-  vi.mocked(getConversation).mockResolvedValueOnce([])
+  resumeAsk.mockResolvedValueOnce((async function* () {
+    yield { event: 'token', data: '新版答案' } as RawSSEEvent
+    yield { event: 'done', data: { conversation_id: 'c1', qa_id: 'qa1b', root_qa_id: 'qa1', version_count: 2 } } as RawSSEEvent
+  })())
+  vi.mocked(getConversation).mockResolvedValueOnce([turnRow('qa1', 'Q1', '舊版')])
   const after = renderHook(() => useAskController(), { wrapper: withQueryClient().wrapper })
   await act(async () => { await after.result.current.loadConversation('c1') })
-  expect(vi.mocked(stopAsk).mock.calls[0]).toEqual([kept])
-  expect(getConversation).toHaveBeenCalledWith('c1')
+  await waitFor(() => expect(after.result.current.state.turns[0]?.phase).toBe('done'))
+  const turn = after.result.current.state.turns[0]
+  expect(after.result.current.state.turns).toHaveLength(1)
+  expect(turn).toMatchObject({ answer: '新版答案', qaId: 'qa1b', versionCount: 2 })
+  expect(turn.priorVersions[0]).toMatchObject({ answer: '舊版', qaId: 'qa1' })
 })
 
-test('串流中斷後的落庫送成功：留下的那一份收掉，之後重整不會再補送', async () => {
-  let breakStream!: () => void
-  streamAsk.mockReturnValue((async function* () {
-    await new Promise<void>((_, rej) => { breakStream = () => rej(new TypeError('Failed to fetch')) })
-    yield { event: 'token', data: '不會到' } as RawSSEEvent
+test('接回途中按停止：照舊送停止（後端取消生成）', async () => {
+  const requestId = await leaveUnfinishedFollowUp()
+  resumeAsk.mockResolvedValueOnce((async function* () {
+    yield { event: 'token', data: '前半' } as RawSSEEvent
+    await new Promise<void>(() => {})
   })())
+  vi.mocked(getConversation).mockResolvedValueOnce([turnRow('qa1', 'Q1', '第一題答案')])
+  const after = renderHook(() => useAskController(), { wrapper: withQueryClient().wrapper })
+  await act(async () => { await after.result.current.loadConversation('c1') })
+  await waitFor(() => expect(after.result.current.state.turns[1]?.answer).toBe('前半'))
+  await act(async () => { await after.result.current.stop() })
+  expect(stopAsk).toHaveBeenCalledWith(expect.objectContaining({
+    question: 'Q2', partial_answer: '前半', conversation_id: 'c1', request_id: requestId,
+  }))
+  expect(after.result.current.state.turns[1].phase).toBe('stopped')
+})
+
+test('串流中斷（連線層失敗）：不送停止，留下接回資訊', async () => {
+  const s1 = breakable()
+  streamAsk.mockReturnValue(s1.gen)
   const { result } = renderHook(() => useAskController(), { wrapper: withQueryClient().wrapper })
   act(() => result.current.submit('Q'))
-  await act(async () => { breakStream(); await Promise.resolve() })
-  await waitFor(() => expect(stopAsk).toHaveBeenCalledTimes(1))
-  await waitFor(() => expect(sessionStorage.getItem('tf.ask.unfinished')).toBeNull())
+  await act(async () => { s1.break(); await Promise.resolve() })
+  await waitFor(() => expect(savedUnfinished()).toMatchObject({ resume: true, body: { question: 'Q' } }))
+  expect(stopAsk).not.toHaveBeenCalled()
 })
 
 test('既有對話裡的續問不建暫存列', async () => {
@@ -365,8 +478,12 @@ test('既有對話裡的續問不建暫存列', async () => {
   expect(pendingOf(client)).toBeNull()
 })
 
-test('新對話跑到一半被切走（開新對話）：照樣落庫，側欄那一列接到停止列；畫面已是新對話，不受影響', async () => {
-  const g = gated([{ event: 'token', data: 'A' }, { event: 'token', data: 'B' }])
+test('新對話跑到一半被切走（開新對話）：不送停止，背景讀到 done 後側欄那一列接到真的那一串；畫面已是新對話', async () => {
+  const g = gated([
+    { event: 'token', data: 'A' },
+    { event: 'token', data: 'B' },
+    { event: 'done', data: { conversation_id: 'c-bg', qa_id: 'qa-bg' } },
+  ])
   streamAsk.mockReturnValue(g.gen)
   const { client, wrapper } = withQueryClient()
   const resolved: unknown[] = []
@@ -378,10 +495,27 @@ test('新對話跑到一半被切走（開新對話）：照樣落庫，側欄�
   await act(async () => { g.release(); await Promise.resolve() })
   expect(pendingOf(client)).not.toBeNull()
   act(() => result.current.newConversation())
-  await waitFor(() => expect(stopAsk).toHaveBeenCalledWith(expect.objectContaining({ question: 'Q', partial_answer: 'A', conversation_id: null })))
-  // 暫存列先改連到停止列（qa_id 就是這一串的 id），清單重抓完才清掉
-  await waitFor(() => expect(resolved).toContainEqual(expect.objectContaining({ title: 'Q', conversationId: 'qa-stop' })))
+  // 連線沒被中斷：後端照跑，這條連線在背景讀到 done。暫存列留著，直到那時。
+  expect((streamAsk.mock.calls[0][1] as AbortSignal).aborted).toBe(false)
+  expect(pendingOf(client)).not.toBeNull()
+  await act(async () => { g.release(); await Promise.resolve() })
+  await act(async () => { g.release(); await Promise.resolve() })
+  await waitFor(() => expect(resolved).toContainEqual(expect.objectContaining({ title: 'Q', conversationId: 'c-bg' })))
   await waitFor(() => expect(pendingOf(client)).toBeNull())
+  expect(stopAsk).not.toHaveBeenCalled()
   expect(result.current.conversationId).toBeNull()
   expect(result.current.state.turns).toHaveLength(0)
+})
+
+test('被取代的那一輪在背景沒讀到 done 就斷了：暫存列照樣收掉，不會永遠 pending', async () => {
+  const s1 = breakable({ event: 'token', data: 'A' })
+  streamAsk.mockReturnValue(s1.gen)
+  const { client, wrapper } = withQueryClient()
+  const { result } = renderHook(() => useAskController(), { wrapper })
+  act(() => result.current.submit('Q'))
+  await waitFor(() => expect(result.current.state.turns[0]?.answer).toBe('A'))
+  act(() => result.current.newConversation())
+  await act(async () => { s1.break(); await Promise.resolve() })
+  await waitFor(() => expect(pendingOf(client)).toBeNull())
+  expect(stopAsk).not.toHaveBeenCalled()
 })

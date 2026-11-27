@@ -43,7 +43,20 @@ export async function* readSSE(
   signal: AbortSignal,
   method: 'POST' | 'GET' = 'POST'
 ): AsyncGenerator<RawSSEEvent> {
-  // GET 用於「重連既有背景 run」——那條沒有請求體，帶 Content-Type 與空 body 會被
+  yield* await openSSE(path, body, signal, method)
+}
+
+/**
+ * 送出請求、確認狀態碼之後才回傳事件產生器：呼叫端要在第一個事件到之前就知道接不接得上
+ * （`/api/ask/resume` 的 404 要退回停止路徑；200 的 run 可能還在排隊、很久才有第一個事件）。
+ */
+export async function openSSE(
+  path: string,
+  body: unknown,
+  signal: AbortSignal,
+  method: 'POST' | 'GET' = 'POST'
+): Promise<AsyncGenerator<RawSSEEvent>> {
+  // GET 用於接回進行中的生成（/api/ask/resume）——那條沒有請求體，帶 Content-Type 與空 body 會被
   // Starlette 當成畸形請求。
   const resp = await fetch(path, {
     method,
@@ -68,7 +81,10 @@ export async function* readSSE(
     throw new ApiError(429, detail)
   }
   if (!resp.ok || !resp.body) throw new ApiError(resp.status, `HTTP ${resp.status}`)
-  const reader = resp.body.getReader()
+  return frames(resp.body.getReader())
+}
+
+async function* frames(reader: ReadableStreamDefaultReader<Uint8Array>): AsyncGenerator<RawSSEEvent> {
   const dec = new TextDecoder()
   let buf = ''
   while (true) {

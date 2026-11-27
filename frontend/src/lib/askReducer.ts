@@ -87,6 +87,8 @@ export type AskAction =
   | { type: 'truncate-after'; id: string }
   | { type: 'submit-edit'; id: string; question: string }
   | { type: 'load-versions'; id: string; versions: QaVersion[] }
+  /** 重整後接回的那一輪，若載入的對話裡已有同一列（重整前就已落庫）就拿掉，免得同一題出現兩次。 */
+  | { type: 'remove'; id: string }
 
 function mapTurn(turns: Turn[], id: string, fn: (item: Turn) => Turn): Turn[] {
   return turns.map(item => (item.id === id ? fn(item) : item))
@@ -183,6 +185,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
     }
     case 'feedback': return { turns: mapTurn(state.turns, action.id, item => ({ ...item, feedback: action.value })) }
     case 'load': return { turns: action.turns }
+    case 'remove': return { turns: state.turns.filter(item => item.id !== action.id) }
     case 'reset': return { turns: [] }
     case 'ask-stop': return {
       // queuePosition 清掉的理由同 ask-end：排隊中按停止，留著會讓「已停止」的輪

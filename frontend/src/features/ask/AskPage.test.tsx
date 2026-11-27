@@ -16,6 +16,7 @@ vi.mock('../../lib/askApi', () => ({
   getReportHash: (id: string) => getReportHash(id),
   getQaVersions: vi.fn(async () => []),
   stopAsk: vi.fn(async () => ({ qa_id: 'qa-stop' })),
+  resumeAsk: vi.fn(async () => { throw new Error('沒有要接回的') }),
   sendFeedback: vi.fn(async () => {}),
 }))
 import { stopAsk } from '../../lib/askApi'
