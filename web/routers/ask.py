@@ -1,5 +1,5 @@
 # web/routers/ask.py
-"""RAG 問答 API：/api/ask（SSE 串流回答）與 /api/ask/stop（保存中斷的部分答案）。
+"""RAG 問答 API：/api/ask（SSE 串流回答）、/api/ask/resume（接回進行中的生成）與 /api/ask/stop（停止並保存部分答案）。
 
 從 web/server.py 拆出（第三步）。
 
@@ -21,15 +21,23 @@ NULL 共用歷史），在開始串流**之前**回 404——SSE 一旦送出 20
 `ask`（排隊滿額被拒不扣次數），所以重新生成、編輯重問都算、`/api/ask/stop` 不算。超額時：影子模式照常放行
 （`usage_counter` 記 `ask_over`）；兩道開關都開才回 429 `quota_exceeded`，`Retry-After`＝距業務時區午夜的秒數。
 配額計數寫不進 DB 時放行（費用控管不是安全邊界）。與 `_ASK_GATE` 互相獨立：閘門管全站同時幾題，配額管每人每天幾題。
+
+**生成與連線解耦**（`app/services/ask_runs.py`）：帶 `request_id` 的 `/api/ask` 把整段生成（取名額、
+`answer_question`、錯誤轉 SSE、metrics、釋放名額）放進背景 task，事件寫進 `_ASK_RUNS`；HTTP 回應只是訂閱者，
+斷線不取消 task，生成照跑到完成、照常落庫。`GET /api/ask/resume/{request_id}` 讓同一使用者接回（補送已產生的
+事件再即時串流），結束後保留 `ASK_RESUME_TTL_SECONDS` 秒。只有 `/api/ask/stop` 會取消 task。沒帶 `request_id`
+的請求維持綁連線：斷線即停止。`_ASK_RUNS` 與 `_ASK_GATE` 一樣是 per-process 狀態。
 """
 import logging
 import os
+from collections.abc import AsyncGenerator, AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.services.accounts import User
+from app.services.ask_runs import AskRun, AskRunRegistry
 from app.services.llm import LLMUnavailableError
 from web import authz, deps, metrics
 from web.concurrency import ConcurrencyGate
@@ -68,6 +76,13 @@ class AskRequest(BaseModel):
 # 早點知道，好過在一條開好的 SSE 上等十分鐘。設 0 可退回舊行為（無限排隊）。
 _ASK_GATE = ConcurrencyGate(3, name="ask", max_queue=int(os.getenv("ASK_MAX_QUEUE", "20")))
 
+# 進行中與剛結束的生成（帶 request_id 的 /api/ask）。結束後保留 ASK_RESUME_TTL_SECONDS 秒供重整後接回；
+# 過期、web 重啟過或暫存超過上限時接不回（resume 回 404），前端退回以手上的部分答案送 /api/ask/stop。
+_ASK_RUNS = AskRunRegistry(ttl=float(os.getenv("ASK_RESUME_TTL_SECONDS", "300")))
+# /api/ask/stop 取消背景 task 後最多等它收攏這麼久，才接著寫停止列。
+_STOP_CANCEL_TIMEOUT = 10.0
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
 ASK_ERROR_DETAIL = "問答服務發生錯誤"
 # 依 LLMUnavailableError.kind 給使用者看的訊息（沒有對應的 kind 落到預設）。
 # 內容審查：同一題換個問法多半就過，要讓使用者知道「可以自己處理」，而不是以為站台壞了。
@@ -99,6 +114,68 @@ async def _charge_quota(user: User) -> None:
             headers={"Retry-After": str(decision.retry_after or 1)},
             extra={"kind": decision.kind, "limit": decision.limit},
         )
+
+
+async def _answer_frames(
+    question: str, *, k: int, filters: dict, req: AskRequest, user: User,
+) -> AsyncGenerator[str, None]:
+    """一次提問的完整 SSE 事件框序列：排隊、取名額、`answer_question`、錯誤轉 SSE、metrics、釋放名額。
+
+    綁連線的舊路徑由 HTTP 回應直接迭代它；帶 request_id 的由背景 task 迭代、寫進 `_ASK_RUNS`。
+    結局指標（web/metrics.py）：沒走到下面任何一個分支就離開＝被取消——綁連線時是使用者斷線或停止，
+    背景 task 時只有 `/api/ask/stop`（或關機）。
+    """
+    # 排隊要先說。這段跑在回應開始串流之後，若直接 await 到取得名額，使用者看到的
+    # 是「連線建立但永遠沒有 token」——與伺服器卡死完全無從分辨。
+    outcome, llm_kind = "cancelled", None
+    if _ASK_GATE.would_queue():
+        yield deps._sse("queued", _ASK_GATE.queue_event())
+    await _ASK_GATE.acquire()
+    try:
+        try:
+            async for event, payload in deps.answer_question(
+                question,
+                k=k,
+                filters=filters,
+                conversation_id=req.conversation_id,
+                regenerate_of=req.regenerate_of,
+                edit_of=req.edit_of,
+                request_id=req.request_id,
+                locale=req.locale,
+                web=req.web,
+                user_id=user.id,
+            ):
+                yield deps._sse(event, payload)
+            outcome = "ok"
+        except LLMUnavailableError as exc:
+            # answer_question 已把失敗那輪落庫（filters.llm_error），這裡只負責說人話。
+            outcome, llm_kind = "llm_error", exc.kind
+            logger.exception("ask failed: LLM 不可用 kind=%s", exc.kind)
+            yield deps._sse("error", {"detail": _llm_error_detail(exc)})
+        except Exception:
+            outcome = "error"
+            logger.exception("ask failed")
+            yield deps._sse("error", {"detail": ASK_ERROR_DETAIL})
+    finally:
+        _ASK_GATE.release()
+        metrics.record_qa(outcome, llm_kind)
+
+
+def _start_run(request_id: str, question: str, *, k: int, filters: dict, req: AskRequest, user: User) -> AskRun:
+    """背景跑 `_answer_frames`、事件寫進 run。訂閱者斷線不影響它，只有 `_ASK_RUNS.cancel` 會中止。"""
+    async def work(run: AskRun) -> None:
+        frames = _answer_frames(question, k=k, filters=filters, req=req, user=user)
+        try:
+            async for frame in frames:
+                run.append(frame)
+        finally:
+            await frames.aclose()
+
+    return _ASK_RUNS.start(request_id, user.id, work)
+
+
+def _stream_response(frames: AsyncIterator[str]) -> StreamingResponse:
+    return StreamingResponse(deps._with_heartbeat(frames), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
 def _check_ref_formats(*, conversation_id, regenerate_of, edit_of, request_id) -> None:
@@ -137,6 +214,9 @@ async def ask(req: AskRequest, user: User = Depends(authz.current_user)):
     事件序：（滿載時先 queued）→ sources（引用清單）→ 多筆 token（文字片段）→
     done（實際引用的報告 id）。web=true 時另可能出現 status.searching_web 與
     ext_sources（外部來源清單）。
+
+    帶 request_id：生成在背景跑，這條回應斷線不影響它（可經 /api/ask/resume 接回）；同一個 request_id
+    已有 run（進行中或仍在保留期內）時回 409。沒帶：生成綁在這條連線上。
     """
     question = (req.question or "").strip()
     if not question:
@@ -164,6 +244,8 @@ async def ask(req: AskRequest, user: User = Depends(authz.current_user)):
     await _reject_foreign_refs(
         user, conversation_id=req.conversation_id, regenerate_of=req.regenerate_of, edit_of=req.edit_of,
     )
+    if req.request_id is not None and _ASK_RUNS.exists(req.request_id):
+        raise HTTPException(status_code=409, detail="request_id 已在使用")
     # 唯一能回 429 的位置：SSE 一旦送出 200 就改不了 status code（見 ConcurrencyGate.queue_full）。
     if _ASK_GATE.queue_full():
         metrics.record_qa("queue_full")
@@ -175,48 +257,22 @@ async def ask(req: AskRequest, user: User = Depends(authz.current_user)):
     # 配額在 queue_full 之後：排隊滿額被拒的那一次不扣（設計 §1.3）。
     await _charge_quota(user)
 
-    async def gen():
-        # 排隊要先說。這段跑在回應開始串流之後，若直接 await 到取得名額，使用者看到的
-        # 是「連線建立但永遠沒有 token」——與伺服器卡死完全無從分辨。
-        # 結局指標（web/metrics.py）：沒走到下面任何一個分支就離開＝使用者中途斷線或停止（GeneratorExit／取消）。
-        outcome, llm_kind = "cancelled", None
-        if _ASK_GATE.would_queue():
-            yield deps._sse("queued", _ASK_GATE.queue_event())
-        await _ASK_GATE.acquire()
-        try:
-            try:
-                async for event, payload in deps.answer_question(
-                    question,
-                    k=k,
-                    filters=filters,
-                    conversation_id=req.conversation_id,
-                    regenerate_of=req.regenerate_of,
-                    edit_of=req.edit_of,
-                    request_id=req.request_id,
-                    locale=req.locale,
-                    web=req.web,
-                    user_id=user.id,
-                ):
-                    yield deps._sse(event, payload)
-                outcome = "ok"
-            except LLMUnavailableError as exc:
-                # answer_question 已把失敗那輪落庫（filters.llm_error），這裡只負責說人話。
-                outcome, llm_kind = "llm_error", exc.kind
-                logger.exception("ask failed: LLM 不可用 kind=%s", exc.kind)
-                yield deps._sse("error", {"detail": _llm_error_detail(exc)})
-            except Exception:
-                outcome = "error"
-                logger.exception("ask failed")
-                yield deps._sse("error", {"detail": ASK_ERROR_DETAIL})
-        finally:
-            _ASK_GATE.release()
-            metrics.record_qa(outcome, llm_kind)
+    if req.request_id is None:
+        # 舊用戶端：生成綁在這條連線上，斷線即停止。
+        return _stream_response(_answer_frames(question, k=k, filters=filters, req=req, user=user))
+    return _stream_response(_start_run(req.request_id, question, k=k, filters=filters, req=req, user=user).subscribe())
 
-    return StreamingResponse(
-        deps._with_heartbeat(gen()),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+
+@router.get("/api/ask/resume/{request_id}")
+async def ask_resume(request_id: str, user: User = Depends(authz.current_user)):
+    """接回進行中（或剛結束、在 ASK_RESUME_TTL_SECONDS 內）的生成：先補送已產生的全部事件，再即時串流到結束。
+
+    格式與 `/api/ask` 相同。不是本人的、不存在的、過期的、暫存超過上限的一律 404（看不出差別）。
+    """
+    run = _ASK_RUNS.resumable(request_id, user.id) if deps._valid_uuid(request_id) else None
+    if run is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return _stream_response(run.subscribe())
 
 
 class StopRequest(BaseModel):
@@ -243,6 +299,9 @@ async def ask_stop(req: StopRequest, user: User = Depends(authz.current_user)):
     await _reject_foreign_refs(
         user, conversation_id=req.conversation_id, regenerate_of=req.regenerate_of, edit_of=req.edit_of,
     )
+    # 背景生成還在跑：先取消並等它收攏，再寫停止列（兩者以 request_id 收斂成同一列）。已結束的照既有規則。
+    if req.request_id is not None:
+        await _ASK_RUNS.cancel(req.request_id, user.id, timeout=_STOP_CANCEL_TIMEOUT)
     qa_id = await deps.log_stopped_qa(
         (req.question or "").strip(),
         req.partial_answer or "",
