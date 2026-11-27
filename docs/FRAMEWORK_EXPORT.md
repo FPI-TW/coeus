@@ -22,7 +22,7 @@ uv run python scripts/export_framework.py --check              # 只核對清單
 
 | 檔案 | 內容 |
 |---|---|
-| `report-mark-framework-<commit 日期>-<sha12>.tar.gz` | 最上層一個同名目錄，裡面是交付的檔案、DELIVERY_INFO.json、`SHA256SUMS` |
+| `coeus-framework-<commit 日期>-<sha12>.tar.gz` | 最上層一個同名目錄，裡面是交付的檔案、DELIVERY_INFO.json、`SHA256SUMS` |
 | …tar.gz.sha256 | tarball 本身的 sha256 |
 | …receipt.json | DELIVERY_INFO.json 的內容加上打包時間、tarball 雜湊、警告與每一步驗證的結果（不在 tarball 裡，留給源頭對帳） |
 

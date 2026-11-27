@@ -1,6 +1,6 @@
-# 券商研報平台（report-mark）
+# Coeus（券商研報平台）
 
-券商研報平台是給券商**單租戶、部署在自己環境**的研報框架：把研報 PDF／docx 抽字、以 LLM（`gpt-6-luna`）標註市場與標的、以 BGE-M3 嵌入 pgvector，提供語意檢索、RAG 問答、研報閱讀頁、券商觀點雷達、每日簡報與管理後台。個別帳號登入（管理員／一般使用者兩種角色），對外另有 API 用戶端（`/external/v1/*`）。<!-- export-omit:begin -->GitHub 為 `FPI-TW/report-research`，目錄名沿用 `report-mark`。<!-- export-omit:end -->
+Coeus 是給券商**單租戶、部署在自己環境**的研報框架：把研報 PDF／docx 抽字、以 LLM（`gpt-6-luna`）標註市場與標的、以 BGE-M3 嵌入 pgvector，提供語意檢索、RAG 問答、研報閱讀頁、券商觀點雷達、每日簡報與管理後台。個別帳號登入（管理員／一般使用者兩種角色），對外另有 API 用戶端（`/external/v1/*`）。<!-- export-omit:begin -->GitHub 為 `FPI-TW/coeus`，目錄名沿用 `report-mark`。<!-- export-omit:end -->
 
 同一份程式服務每一家券商：機構專屬的東西放在 **profile**（`profiles/<名稱>/`），祕密與部署層設定（金鑰、DB URL、LLM 端點）走環境變數。
 

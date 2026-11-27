@@ -44,7 +44,7 @@ from app.services.object_storage import (  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="比對私有 R2 與 report-mark DB（不刪除）")
+    parser = argparse.ArgumentParser(description="比對私有 R2 與 Coeus DB（不刪除）")
     parser.add_argument("--dry-run", action="store_true", help="僅列出計畫／差異，不寫 DB 或 R2")
     # 生成 PDF 那一半移除後只剩 originals；仍收 "all" 讓 report-mark-r2-reconcile.service 的命令列不必改。
     parser.add_argument("--kind", choices=("originals", "all"), default="all")
