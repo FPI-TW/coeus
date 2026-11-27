@@ -5,7 +5,7 @@ import { parseAskEvent } from './askSchemas'
 import { streamAsk, getConversation, sendFeedback, stopAsk, getQaVersions, type StopBody } from './askApi'
 import { ApiError } from './api'
 import { clearPendingConversation, resolvePendingConversation, startPendingConversation } from './pendingConversation'
-import { flushUnfinished, saveUnfinished } from './unfinishedAsk'
+import { clearUnfinished, flushUnfinished, saveUnfinished } from './unfinishedAsk'
 import { useLocale } from './useLocale'
 import { useWebSearch, useWebSearchPaused } from './useWebSearch'
 
@@ -101,8 +101,11 @@ export function useAskController(): UseAskController {
   // convRef、URL 同步、qaId 這些畫面上的副作用套上去就是把新狀態汙染回舊對話——只做落庫與側欄。
   const keepUnfinished = useCallback(async (turnId: string, body: StopBody, my: number) => {
     let qaId: string | null = null
+    // 先留一份給重整後的頁面：重整時串流先被中斷、走到這裡，這次請求又會跟著頁面卸載被取消（見 unfinishedAsk.ts）。
+    saveUnfinished(body)
     try {
       qaId = (await stopAsk(body)).qa_id
+      clearUnfinished(body.request_id)
       if (my === reqId.current) {
         // 首題尚未收到 done 時，資料庫以 COALESCE(conversation_id, id) 將停止列
         // 視為自己的對話。沿用 qa_id，才能讓後續重生／續問留在同一串。
@@ -112,7 +115,11 @@ export function useAskController(): UseAskController {
         }
         dispatch({ type: 'set-qa', id: turnId, qaId })
       }
-    } catch { /* fail-open：畫面維持原狀，僅這一輪沒存到 */ } finally {
+    } catch (e) {
+      // 後端明確拒絕（非 2xx）就不必留著重送；連線層失敗（含頁面卸載取消）留著，重整後補送。
+      if (e instanceof Error && e.message.startsWith('stop failed')) clearUnfinished(body.request_id)
+      /* fail-open：畫面維持原狀，僅這一輪沒存到 */
+    } finally {
       // 開新對話的那一輪：qa_id 就是這一串的 id。不是時 key 對不上，只剩重抓清單。
       settlePending(turnId, body.conversation_id ? null : qaId)
     }

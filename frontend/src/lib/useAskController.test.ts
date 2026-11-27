@@ -19,7 +19,8 @@ async function* oneToken(): AsyncGenerator<RawSSEEvent> {
 }
 
 describe('useAskController stop', () => {
-  beforeEach(() => vi.restoreAllMocks())
+  // 停止落庫失敗時會在 sessionStorage 留一份給重整後補送（unfinishedAsk.ts）；不清掉的話，下一題掛載時就把它送出去。
+  beforeEach(() => { vi.restoreAllMocks(); sessionStorage.clear() })
 
   it('stop reports partial via stopAsk and sets stopped phase', async () => {
     vi.spyOn(api, 'streamAsk').mockReturnValue(oneToken())
